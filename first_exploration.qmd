@@ -1,0 +1,264 @@
+---
+title: "first_exploration"
+format: html
+editor: visual
+---
+
+```{r message=FALSE, warning=FALSE}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(magrittr)
+library(ggplot2)
+library(Seurat)
+library(tidyseurat)
+library(BPCells)
+library(Azimuth)
+library(stringr)
+```
+
+# load conventionallz without BPcells
+```{r eval=FALSE, include=FALSE}
+dat <- Read10X("C:\\Users\\Danne\\raw_data\\cubi_cusco\\hub_01_outs\\multi\\count\\raw_feature_bc_matrix\\")
+hub_01 <- CreateSeuratObject(counts = dat$`Gene Expression`, project = "hub_01")
+
+hashtags <- CreateAssay5Object(counts=dat$`Multiplexing Capture`)
+#check if column names are equal
+if (all.equal(colnames(hashtags), colnames(hub_01))) {
+  hub_01[["hashtags"]] <- hashtags
+  hub_01 |> saveRDS(file = "intermediate_data/hub_01_raw_seurate.rds")
+}else
+  warning("cell names are not alike")
+
+dat <- NULL
+hashtags <- NULL
+```
+# load tag calls separately
+```{r}
+tag_calls_summary <- read_csv("C:/Users/Danne/raw_data/cubi_cusco/hub_01_outs/multi/multiplexing_analysis/tag_calls_summary.csv")
+tag_calls_per_cell <- read_csv("C:/Users/Danne/raw_data/cubi_cusco/hub_01_outs/multi/multiplexing_analysis/tag_calls_per_cell.csv")
+assignment_confidence_table <- read_csv("C:/Users/Danne/raw_data/cubi_cusco/hub_01_outs/multi/multiplexing_analysis/assignment_confidence_table.csv")
+```
+# load gene reads and hashtag reads with BPCells
+```{r}
+hub_01 <- open_matrix_10x_hdf5(
+  path = "C:/Users/Danne/raw_data/cubi_cusco/hub_01_outs/multi/count/raw_feature_bc_matrix.h5"
+)
+rownames(hub_01)
+#separate the matrix in hashtag and gene reads
+rows_with_CMO <- grepl("CMO", rownames(hub_01))
+cmo_hub_01 <- hub_01[rows_with_CMO,]
+
+
+# Write the matrix to a directory
+ write_matrix_dir(
+   mat = hub_01,
+   dir = 'BPcell_matrices/hub_01')
+ 
+write_matrix_dir(
+   mat = cmo_hub_01,
+   dir = 'BPcell_matrices/cmo_hub_01')
+```
+
+```{r}
+
+hub_01 <- open_matrix_dir(dir = "BPcell_matrices/hub_01")
+cmo_hub_01 <- open_matrix_dir(dir = "BPcell_matrices/cmo_hub_01")
+hub_01 <- Azimuth:::ConvertEnsembleToSymbol(mat = hub_01, species = "human")
+hashtags <- CreateAssay5Object(counts=cmo_hub_01)
+
+# Create Seurat Object
+hub_01 <- CreateSeuratObject(counts = hub_01)
+hub_01[["hashtags"]] <- hashtags
+
+hub_01 <- hub_01 |> filter(nCount_RNA>1000, nFeature_RNA>500)
+
+saveRDS(
+   object = hub_01,
+   file = "intermediate_data/seurat_obj_hub_01_bpcells_raw.Rds"
+)
+
+```
+
+# basic data transformations
+
+```{r}
+hub_01 <- readRDS(file = "intermediate_data/seurat_obj_hub_01_bpcells_raw.Rds")
+
+hub_01 <- hub_01 |> 
+  NormalizeData()
+
+hub_01 <- hub_01 |> 
+  FindVariableFeatures()
+
+hub_01 <- hub_01 |> 
+  ScaleData() |> 
+  RunPCA()
+
+
+hub_01 <- FindNeighbors(hub_01, dims = 1:30) |> 
+  FindClusters(resolution = 0.8, verbose = FALSE) |> 
+  RunUMAP(dims = 1:30)
+
+saveRDS(
+   object = hub_01,
+   file = "intermediate_data/seurat_obj_hub_01_bpcells_raw_scaled.Rds"
+)
+
+hub_01 <- readRDS(file = "intermediate_data/seurat_obj_hub_01_bpcells_raw_scaled.Rds")
+
+hub_01 |> DimPlot()
+```
+
+## Add Meta data from cellranger multi
+
+```{r}
+convert_vector <- c("CMO302"="hIO_BIHi005-A",
+"CMO301"="hIO_BIHi001-B",
+"CMO303"="hIO_BIHi250-A",
+"CMO304"="hIO_UCSFi001-A")
+
+# make metadata column: cell_line_cellranger -- match CMOxx to cell line name, adjusted feature_call column from cellranger multi
+cell_barcodes <- tag_calls_per_cell |>
+  right_join(tibble(cell_barcode=colnames(hub_01)), keep=T)  |>
+  mutate(cell_line_cellranger=str_replace_all(feature_call,convert_vector) |>
+           replace_na("no cell"))
+
+
+# make metadata column: singlet_doublet_cellranger -- cellranger calls with levels doublet, singlet no cell(not called a cell from cellranger and therefore not in file per_sample_outs but in file multi>count)
+#adjusted feature_call column from cellranger multi
+cell_barcodes <-  cell_barcodes |> mutate(singlet_doublet_cellranger = ifelse(grepl("\\|", cell_line_cellranger), "doublet", 
+                                                 ifelse(cell_line_cellranger=="no cell","no cell","singlet"
+                                                        )))
+# make metadata column: cell_line_doublet_cellranger --- like singlet_doublet_cellranger but with cell line names
+cell_barcodes <-  cell_barcodes |> mutate(cell_line_doublet_cellranger = ifelse(grepl("\\|", cell_line_cellranger), "doublet",cell_line_cellranger))
+
+# add relevant dataframe columns to Seurat Metadata
+cell_barcodes <- cell_barcodes |>
+  as.data.frame()
+rownames(cell_barcodes) <- cell_barcodes$cell_barcode.y
+cell_barcodes <- cell_barcodes[,c("cell_line_cellranger","singlet_doublet_cellranger","cell_line_doublet_cellranger")]
+hub_01 <- AddMetaData(hub_01,cell_barcodes)
+
+saveRDS(
+   object = hub_01,
+   file = "intermediate_data/seurat_obj_hub_01_bpcells_raw_scaled_cellranger_meta_data.Rds"
+)
+
+hub_01 <- readRDS(file = "intermediate_data/seurat_obj_hub_01_bpcells_raw_scaled_cellranger_meta_data.Rds")
+```
+
+```{r}
+hub_01 |> DimPlot(group.by = "cell_line_cellranger")
+hub_01 |> DimPlot(group.by = "singlet_doublet_cellranger",order = "doublet")
+hub_01 |> DimPlot(group.by = "cell_line_doublet_cellranger")
+
+```
+
+```{r}
+library(rhdf5)
+h5f = H5Fopen("C:\\Users\\Danne\\raw_data\\cubi_cusco\\cellbender\\hub_01\\hub_01_cellbender_corrected_filtered.h5")
+corrected = H5Fopen("C:\\Users\\Danne\\raw_data\\cubi_cusco\\cellbender\\hub_01\\hub_01_cellbender_corrected.h5")
+cell_prob_tbl <- tibble(
+cell=corrected$metadata$barcodes_analyzed,
+cell_probability= corrected$droplet_latents$cell_probability)
+
+cell_prob_tbl <- cell_prob_tbl |> filter(cell %in% colnames(hub_01))
+cell_prob_vec <- cell_prob_tbl |> pull(cell_probability)
+names(cell_prob_vec) <- cell_prob_tbl |> pull(cell)
+hub_01_cellbender <- AddMetaData(hub_01_cellbender,, col.name = "cellbender_prob_to_be_cell")
+hub_01_cellbender@meta.data$cellbender_prob_to_be_cell <- as.double(hub_01_cellbender@meta.data$cellbender_prob_to_be_cell)
+```
+
+# Cellbender corrected
+# load gene reads and hashtag reads with BPCells
+```{r}
+path <-  "C:\\Users\\Danne\\raw_data\\cubi_cusco\\cellbender\\hub_01\\hub_01_cellbender_corrected_filtered_seurat.h5"
+data.data <- Read10X_h5(filename = path, use.names = TRUE)
+
+write_matrix_dir(data.data, dir = 'BPcell_matrices/hub_01_cellbender')
+
+
+hub_01_cellbender <- open_matrix_dir(dir = "BPcell_matrices/hub_01_cellbender")
+hub_01_cellbender <- Azimuth:::ConvertEnsembleToSymbol(mat = hub_01_cellbender, species = "human")
+
+# Create Seurat Object
+hub_01_cellbender <- CreateSeuratObject(counts = hub_01_cellbender)
+
+sum(hub_01_cellbender$nCount_RNA)
+
+#hub_01_cellbender_filt <- hub_01_cellbender |> filter(nCount_RNA>100)
+
+# saveRDS(
+#    object = hub_01,
+#    file = "intermediate_data/seurat_obj_hub_01_bpcells_raw.Rds"
+# )
+
+
+hub_01_cellbender <- hub_01_cellbender |> 
+  NormalizeData()
+
+hub_01_cellbender <- hub_01_cellbender |> 
+  FindVariableFeatures()
+
+hub_01_cellbender <- hub_01_cellbender |> 
+  ScaleData() |> 
+  RunPCA()
+
+
+hub_01_cellbender <- FindNeighbors(hub_01_cellbender, dims = 1:30) |> 
+  FindClusters(resolution = 0.8, verbose = FALSE) |> 
+  RunUMAP(dims = 1:30)
+```
+
+
+```{r}
+hub_01_cellbender |> DimPlot(group.by = "cell_line_cellranger")
+hub_01_cellbender |> DimPlot(group.by = "singlet_doublet_cellranger",order = "doublet")
+hub_01_cellbender |> DimPlot(group.by = "cell_line_doublet_cellranger")
+hub_01_cellbender |> FeaturePlot("cellbender_prob_to_be_cell", min.cutoff = 0.98, cols = c("red","black")) #+ theme(legend.position = "none")
+
+```
+#Median absolute deviations
+```{r}
+hub_01_cellbender[["percent.mt"]] <- PercentageFeatureSet(object = hub_01_cellbender, pattern = "^MT-")
+hub_01_cellbender |> VlnPlot("percent.mt")
+mt_mad_tbl <- tibble(percent.mt = hub_01_cellbender$percent.mt,
+                     seurat_clusters= hub_01_cellbender$seurat_clusters,
+                      cell_line_cellranger= hub_01_cellbender$cell_line_cellranger)
+
+mt_mad_tbl <- mt_mad_tbl |> group_by(cell_line_cellranger) |> mutate(MAD_percent_mito =mad(percent.mt)) |> mutate(dead_by_mad=ifelse(MAD_percent_mito>1.5, "dead","alive"))
+
+mt_mad_tbl |> ggplot(aes(cell_line_cellranger,percent.mt, colour = dead_by_mad)) +geom_jitter() + theme(axis.text.x = element_text(angle = 45, hjust=1))
+```
+
+
+```{r}
+cell_barcodes <- tag_calls_per_cell |>
+  right_join(tibble(cell_barcode=colnames(hub_01_cellbender)), keep=T)  |>
+  mutate(cell_line_cellranger=str_replace_all(feature_call,convert_vector) |>
+           replace_na("no cell"))
+
+
+# make metadata column: singlet_doublet_cellranger -- cellranger calls with levels doublet, singlet no cell(not called a cell from cellranger and therefore not in file per_sample_outs but in file multi>count)
+#adjusted feature_call column from cellranger multi
+cell_barcodes <-  cell_barcodes |> mutate(singlet_doublet_cellranger = ifelse(grepl("\\|", cell_line_cellranger), "doublet", 
+                                                 ifelse(cell_line_cellranger=="no cell","no cell","singlet"
+                                                        )))
+# make metadata column: cell_line_doublet_cellranger --- like singlet_doublet_cellranger but with cell line names
+cell_barcodes <-  cell_barcodes |> mutate(cell_line_doublet_cellranger = ifelse(grepl("\\|", cell_line_cellranger), "doublet",cell_line_cellranger))
+
+# add relevant dataframe columns to Seurat Metadata
+cell_barcodes <- cell_barcodes |>
+  as.data.frame()
+rownames(cell_barcodes) <- cell_barcodes$cell_barcode.y
+cell_barcodes <- cell_barcodes[,c("cell_line_cellranger","singlet_doublet_cellranger","cell_line_doublet_cellranger")]
+hub_01_cellbender <- AddMetaData(hub_01_cellbender,cell_barcodes)
+
+```
+
+```{r}
+
+```
+
