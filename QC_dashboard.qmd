@@ -12,7 +12,7 @@ server: shiny
 ```{r setup}
 #| warning: false
 #| echo: false
-
+#| context: setup
 
 library(readr)
 library(dplyr)
@@ -29,15 +29,13 @@ library(ggridges)
 library(forcats)
 library(DT)
 library(shiny)
+library(stringr)
 
 #source("QC_dataset_setup_hub_01.R")
 
 theme_1 <-   theme( plot.title = element_text(hjust = 0.5),
   plot.subtitle = element_text(hjust = 0.5))
 
-```
-
-```{r dataset loading}
 #| echo: false
 
 seurat_obj <- read_rds("intermediate_data/QC_dataset_setup_hub_01.R")
@@ -160,6 +158,8 @@ avg_exp_z <- avg_exp_z %>% gather(key = "cluster", value = "z_score", -gene)
 
 # Create the dot plot
 cluster_zscore_data <- as_tibble(avg_exp_z) 
+# Create the dot plot
+cluster_zscore_data <- as_tibble(avg_exp_z) |> mutate(cluster=str_replace_all(cluster,"g","") |> as.double())
 ``` 
 
 
@@ -185,6 +185,10 @@ Thresholds applied to library:
 
 
 
+```{r}
+selectInput('chosen_genes', 'Gene', sort(unique(cluster_zscore_data$gene)), multiple = TRUE) 
+
+```
 
 # background correction
 
@@ -381,9 +385,9 @@ filtered_seurat_obj |> DimPlot( reduction = "umap.RNA",label = T)
 
 # gene level
 
-## Row
+## Row {height="40%"}
 
-### column {height="30%"}
+### column 
 ```{r}
 Idents(seurat_obj) <- "RNA_clusters_leiden_res0.8"
 seurat_obj <- BuildClusterTree(seurat_obj, reduction=pca.RNA, slot="counts" )
@@ -392,16 +396,22 @@ aggregated <- AggregateExpression(seurat_obj,group.by="RNA_clusters_leiden_res0.
 PlotClusterTree(seurat_obj, direction = "downwards")
 ```
 
-### Column
+### column 
 ```{r}
-selectInput('chosen_genes', 'Gene', unique(cluster_zscore_data$gene)) 
-
-
+Idents(seurat_obj) <- "RNA_clusters_leiden_res0.8"
+DefaultAssay(seurat_obj) <- "RNA"
+DimPlot(seurat_obj, label=T) 
 ```
 
+## Row 
 
-## Row
-### Column {widtht="60%"}
+### Column
+```{r}
+plotOutput('dot_plot')
+```
+
+### Column
+
 ```{r}
 #| title: Differantially ecpressed genes
 
@@ -420,11 +430,14 @@ de_genes_tbl |> mutate(cluster=as_factor(cluster)) |>
      )
   ) |> formatSignif(columns=c('p_val', 'avg_log2FC', 'p_val_adj'), digits=4 )
 ```
-### Column
-
 ```{r}
-cluster_zscore_data|> filter(gene %in% input$chosen_genes) |> 
-ggplot( aes(x = cluster, y = gene)) +
+#| context: server
+
+dataset <- reactive({cluster_zscore_data |> filter(gene %in% input$chosen_genes)})
+
+output$dot_plot <- renderPlot({
+
+p <- ggplot(dataset(), aes(x = factor(cluster), y = gene)) +
   geom_point(aes(size = abs(z_score), color = z_score)) +
   scale_color_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
   theme_minimal() +
@@ -432,6 +445,13 @@ ggplot( aes(x = cluster, y = gene)) +
        x = "Cluster",
        y = "Gene",
        size = "Z-score magnitude",
-       color = "Z-score")
-```
+       color = "Z-score")+
+  xlab("cluster")
+  
+  
 
+p
+})
+
+
+```
