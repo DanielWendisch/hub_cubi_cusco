@@ -204,15 +204,39 @@ cell_prob_tbl <- cell_prob_tbl |> filter(cell %in% colnames(seurat_obj))
 cell_prob_vec <- cell_prob_tbl |> pull(cell_probability)
 names(cell_prob_vec) <- cell_prob_tbl |> pull(cell)
 seurat_obj <- AddMetaData(seurat_obj, col.name = "cellbender_prob_to_be_cell", cell_prob_vec)
+
+write_rds(seurat_obj, "intermediate_data/QC_dataset_setup_hub_01.R")
 ###-----------------------------------------------------------------------------------
 
 
 
 
+#find markers for every cluster compared to all remaining cells, report only the positive
+# ones
+###------------------------------------------------------------------------------------------------------
+min_pct = 0.4
+logfc_threshold = 0.25
+max_cells_ = 300
 
+Idents(seurat_obj) <- "RNA_clusters_leiden_res0.8"
+seurat_obj.markers <- FindAllMarkers(seurat_obj,
+                                     only.pos = TRUE,
+                                     min.pct = min_pct,
+                                     logfc.threshold = logfc_threshold,
+                                     max.cells.per.ident = max_cells_ ,) |>
+  as_tibble()
 
+write_rds(seurat_obj.markers, file = paste0("output/",
+                                            "QC_cluster_markers_min.pct_",min_pct,
+                                            "_logfc.threshold_",logfc_threshold,
+                                            "_max.cells.per.ident_",max_cells_,
+                                            ".rds"))
 
-
+write_csv(seurat_obj.markers, file = paste0("output/",
+                                            "QCmarkers_min.pct_",min_pct,
+                                            "_logfc.threshold_",logfc_threshold,
+                                            "_max.cells.per.ident_",max_cells_,
+                                            ".csv"))
 
 
 
