@@ -1,0 +1,70 @@
+---
+title: "exploration of cellranger h5"
+format: html
+editor: visual
+---
+
+```{r}
+
+```
+
+```{r}
+path = "C:/Users/Danne/raw_data/cubi_cusco/hub_01_outs/multi/count/raw_feature_bc_matrix.h5"
+
+```
+
+```{r}
+infile <- hdf5r::H5File$new(filename = path, mode = "r")
+```
+
+```{r}
+hdf5r::existsGroup(infile, "matrix")
+```
+```{r}
+inmatrix <- hdf5r::H5File$new(filename = path, mode = "r",id = "matrix")
+inmatrix <- rhdf5::H5Fopen(path)$matrix
+
+inmatrix |> str()
+```
+
+```{r}
+genome <- names(x = infile)
+```
+```{r}
+indices <- infile[[paste0(genome, "/indices")]]
+indices$key_info
+```
+```{r}
+
+```
+## Gene id's
+```{r}
+
+feature_slot <- "features/id"
+infile[[paste0(genome, "/", feature_slot)]][]|> print(max=100)
+infile[[paste0(genome, "/", feature_slot)]][] |> length()
+infile[[paste0(genome, "/", feature_slot)]][]|> unique() |>  length()
+```
+## Gene names
+```{r}
+feature_slot <- "features/name"
+infile[[paste0(genome, "/", feature_slot)]][] |> print(max=100)
+infile[[paste0(genome, "/", feature_slot)]][] |> length()
+infile[[paste0(genome, "/", feature_slot)]][] |> unique() |>  length()
+print("")
+print("duplicated")
+infile[[paste0(genome, "/", feature_slot)]][infile[[paste0(genome, "/", feature_slot)]][] |> duplicated()]
+```
+```{r}
+
+infile[[paste0(genome, "/indices")]]
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+

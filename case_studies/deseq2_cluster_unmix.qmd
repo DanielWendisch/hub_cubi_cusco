@@ -1,0 +1,865 @@
+---
+title: "deseq2_cluster_unmix"
+format: revealjs
+editor: visual
+---
+
+```{r}
+library(Seurat)
+library(tidyverse)
+library(tidyseurat)
+#library(BayesPrism)
+library(readxl)
+library(janitor)
+library(patchwork)
+library(DESeq2)
+library(ggpmisc)
+library(here)
+
+#library(biomaRt) gives problems with "select"
+#library(InstaPrism)
+#library(MuSiC)
+#library(TOAST)
+#library(SummarizedExperiment)
+#library(SingleCellExperiment)
+#library(tidySingleCellExperiment)
+```
+
+```{r}
+ggsave_png_and_eps <- function(output_path,plotname){
+  ggsave(paste0(output_path,"/", plot_name, ".png"))
+  ggsave(paste0(output_path, "/", plot_name, ".eps"))
+}
+```
+
+```{r}
+dataset_name <- "hub_01"
+path_raw_data_file <-  here("../../raw_data/cubi_cusco")
+
+output_path <- here("output/deseq2_cluster_unmix/")
+obj <- read_rds(here(paste0("intermediate_data/", dataset_name, "_integrated_", ".rds")))
+combined_bulk<- read.csv(paste(path_raw_data_file,"hub_01_02_bulk\\counts_table_hub_01_02.csv", sep = "/"))
+hub_01_meta_data <-  read_csv( here("intermediate_data/hub_01_meta_data.csv"))
+gene_lengths_tbl <- read.csv(paste(path_raw_data_file,"hub_01_02_bulk/gene_lengths.csv", sep = "/")) |> # pulled from alignment output in scripts "bulk_check"
+  as_tibble()
+#obj
+```
+
+```{r}
+#aggregate counts of each cell line in single cell object
+summed_sc_reads_cell_line <- AggregateExpression(object = obj,
+                                                 assays = "uncorrected_RNA",
+                                                 group.by = "cell_line_cellranger")
+
+summed_sc_reads_cell_line <- summed_sc_reads_cell_line[[1]] |>
+  as_tibble(rownames="gene") 
+
+colnames(summed_sc_reads_cell_line)[-1] <- paste0("full-",colnames(summed_sc_reads_cell_line)[-1])
+
+
+obj$cell_line_m_e <- paste0(obj$m_e_class,"_", obj$cell_line_cellranger)
+
+summed_sc_reads_cell_line_m_e <- AggregateExpression(object = obj,
+                                                 assays = "uncorrected_RNA",
+                                                 group.by = "cell_line_m_e")
+
+summed_sc_reads_cell_line_m_e <- summed_sc_reads_cell_line_m_e[[1]] |>
+  as_tibble(rownames="gene")
+
+summed_sc_reads_combined <- summed_sc_reads_cell_line |>
+  left_join(summed_sc_reads_cell_line_m_e)
+
+#combine single cell and bulk data and only keep non-ENSG genes
+count_tbl <-  summed_sc_reads_combined|> 
+  filter(!grepl("ENSG", gene)) |> 
+  inner_join(combined_bulk) |> 
+  select(-X,-ensembl_gene_id)
+
+hub_01_meta_data <- hub_01_meta_data |>
+  mutate(sample=str_replace_all(sample,
+                                pattern = "-",
+                                replacement = ".")) |> 
+  separate(sample, into = c("B","num","sequencing_type"), sep = "_", remove = F) |> 
+  separate(name_2, into = c("processing"))
+
+sc_meta_data <- tibble(sample=colnames(summed_sc_reads_combined |> select(-gene)),
+       sequencing_type="single-cell") |>
+  separate(sample, into = c("tissue_type","organoid",  "cell_line","appendix"), remove = F) |> 
+  mutate(cell_line=paste0(cell_line,"-",appendix)) |> 
+  select(-appendix) 
+
+
+meta_data <- hub_01_meta_data |>
+  bind_rows(sc_meta_data) |> 
+  select(sample, sequencing_type, cell_line,tissue_type,processing) |> 
+  mutate(processing=case_when(processing== "10X" ~ "digested_bulk",
+                              processing== "Pool" ~ "undigested_bulk",
+                              is.na(processing) ~ "digested_sc"
+                              ))
+
+```
+
+```{r}
+count_mtx <- count_tbl |> select(all_of(pull(meta_data, sample))) |> as.matrix()
+
+rownames(count_mtx) <- pull(count_tbl,gene)
+
+
+dds <- DESeqDataSetFromMatrix(
+    countData = count_mtx,
+    colData = meta_data |> mutate(tissue_type=paste(sep="_",tissue_type,sequencing_type)),
+    design = ~ cell_line + tissue_type
+)
+dds <- dds[rowSums(counts(dds)) > 10, ]
+dds <- DESeq(dds)
+results_table <- results(dds )
+summary(results_table)
+resultsNames(dds)
+vsd <- vst(dds)
+```
+
+```{r}
+plot_title <- "PCA bulk and single-cell by cell line with clusters separated, vst"
+plot_subtitle <- dataset_name
+plot_caption <- "vst from DESeq2"
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+plotPCA(vsd, intgroup = "cell_line") + 
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption)+ theme_bw()
+
+ggsave_png_and_eps(output_path,plot_name)
+ggsave(paste0(output_path,plot_name, ".svg"))
+
+```
+
+```{r}
+plot_title <- "PCA bulk and single-cell by tissue type with clusters separated, vst"
+plot_subtitle <- dataset_name
+plot_caption <- "vst from DESeq2"
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+plotPCA(vsd, intgroup = "tissue_type") + 
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption)+ theme_bw()
+
+ggsave_png_and_eps(output_path,plot_name)
+ggsave(paste0(output_path,plot_name, ".svg"))
+
+```
+
+```{r}
+plot_title <- "PCA 3 and 4 bulk and single-cell by sequencing type with clusters separated , vst"
+plot_subtitle <- dataset_name
+plot_caption <- "vst from DESeq2, scSeq counts are sums of cell counts"
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+plotPCA(vsd, intgroup = "sequencing_type", pcsToUse = 3:4 ) + 
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption) + theme_bw()
+
+ggsave_png_and_eps(output_path,plot_name)
+ggsave(paste0(output_path,plot_name, ".png"))
+```
+```{r}
+plot_title <- "PCA 3 and 4 bulk and single-cell by cell line with clusters separated, vst"
+plot_subtitle <- dataset_name
+plot_caption <- "vst from DESeq2"
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+plotPCA(vsd, intgroup = "cell_line", pcsToUse = 3:4 ) + 
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption)+ theme_bw()
+
+ggsave_png_and_eps(output_path,plot_name)
+ggsave(paste0(output_path,plot_name, ".svg"))
+
+```
+
+```{r}
+plot_title <- "PCA 3 and 4 bulk and single-cell by tissue_type with clusters separated, vst"
+plot_subtitle <- dataset_name
+plot_caption <- "vst from DESeq2"
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+plotPCA(vsd, intgroup = "tissue_type", pcsToUse = 3:4 ) + 
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption)+ theme_bw()
+
+ggsave_png_and_eps(output_path,plot_name)
+ggsave(paste0(output_path,plot_name, ".svg"))
+
+```
+
+```{r}
+
+meta_data_sc <- meta_data |> filter(sequencing_type =="single-cell")
+
+count_mtx <- count_tbl |> select(all_of(pull(meta_data_sc, sample))) |> as.matrix()
+
+rownames(count_mtx) <- pull(count_tbl,gene)
+
+
+dds <- DESeqDataSetFromMatrix(
+    countData = count_mtx,
+    colData = meta_data_sc |> mutate(tissue_type=paste(sep="_",tissue_type,sequencing_type)),
+    design = ~ cell_line + tissue_type
+)
+dds <- dds[rowSums(counts(dds)) > 10, ]
+dds <- DESeq(dds)
+results_table <- results(dds )
+summary(results_table)
+resultsNames(dds)
+rld <- rlog(dds)
+```
+```{r}
+plot_title <- "PCA bulk and single-cell by cell line with clusters separated only single cell"
+plot_subtitle <- dataset_name
+plot_caption <- "rlog from DESeq2"
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+plotPCA(rld, intgroup = "cell_line") + 
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption)+ theme_bw()
+
+ggsave_png_and_eps(output_path,plot_name)
+ggsave(paste0(output_path,plot_name, ".svg"))
+
+```
+
+```{r}
+plot_title <- "PCA bulk and single-cell by tissue type with clusters separated only single cell"
+plot_subtitle <- dataset_name
+plot_caption <- "rlog from DESeq2"
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+plotPCA(rld, intgroup = "tissue_type") + 
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption)+ theme_bw()
+
+ggsave_png_and_eps(output_path,plot_name)
+ggsave(paste0(output_path,plot_name, ".svg"))
+
+```
+```{r}
+resultsNames(dds) # lists the coefficients
+res <- results(dds, name="tissue_type_M_single.cell_vs_E_single.cell") |> 
+  as_tibble(rownames="gene")
+# or to shrink log fold changes association with condition:
+res_schrink <- lfcShrink(dds, coef="tissue_type_M_single.cell_vs_E_single.cell" ,type="apeglm") |> 
+  as_tibble(rownames="gene")
+```
+
+```{r}
+
+
+res_schrink |> filter(log2FoldChange>0) |>  arrange(padj)
+res_schrink |> filter(log2FoldChange<0) |>  arrange(padj)
+```
+
+```{r}
+# Load necessary libraries
+library(DESeq2)
+library(ggplot2)
+library(ggrepel)
+
+
+res_schrink <- res_schrink |> mutate(padj=if_else(padj<1.760827e-288,1.760827e-288,padj))
+# Add a column to categorize significance
+res_schrink$significance <- "Not significant"
+res_schrink$significance[res_schrink$padj < 0.0005 & abs(res_schrink$log2FoldChange) > 5] <- "Significant"
+
+# Select the top most significant genes to label
+top_genes <- head(res_schrink[order(res_schrink$padj), ], 40)
+top_genes_vec_20 <- res_schrink |> mutate(neg_pos=if_else(log2FoldChange>0,"pos","neg"))|> group_by(neg_pos ) |> slice_min(padj,n=20) |> pull(gene)
+
+top_genes <- head(res_schrink[order(res_schrink$padj), ], 40)
+top_genes_vec_5 <-pull(top_genes,gene)
+
+# Create the volcano plot
+volcano_plot <- ggplot(res_schrink, aes(x = log2FoldChange, y = -log10(padj))) +
+  geom_point(aes(color = significance), alpha = 0.6, size = 1.5) +
+  scale_color_manual(values = c("gray", "red")) +
+  theme_minimal() +
+  labs(
+    title = "Volcano Plot of DESeq2 Results",
+    x = "Log2 Fold Change",
+    y = "-Log10 Adjusted P-value"
+  ) +
+  geom_text_repel(data = top_genes, aes(label = pull(top_genes,gene)), 
+                  max.overlaps = 10, 
+                  size = 3, 
+                  box.padding = 0.4, 
+                  point.padding = 0.3, 
+                  segment.color = 'grey50')+
+  ylim(0,500)
+
+res_schrink |> WriteXLS::WriteXLS((paste0(output_path, "/DE_genes___hIO___M_vs_E___DESeq___all_cell_lines", ".xlsx")))
+
+# Display the plot
+print(volcano_plot)
+
+ggsave((paste0(output_path,
+               "/volcano_plot___hIO___M_vs_E___DESeq___all_cell_lines", ".png")), width = 20, height = 20)
+
+```
+
+
+```{r}
+vim <-res_schrink |> filter(gene=="VIM")
+res_schrink <- res_schrink |> mutate(padj=if_else(padj<1.760827e-288,1.760827e-288,padj))
+# Add a column to categorize significance
+res_schrink <- res_schrink |> mutate(significance=ifelse(gene=="VIM", "VIM","not VIM"))
+
+volcano_plot <- ggplot(res_schrink, aes(x = log2FoldChange, y = -log10(padj))) +
+  geom_point(aes(color = significance), alpha = 0.6, size = 1.5) +
+  scale_color_manual(values = c("gray", "red")) +
+  theme_minimal() +
+  labs(
+    title = "Volcano Plot of DESeq2 Results",
+    x = "Log2 Fold Change",
+    y = "-Log10 Adjusted P-value"
+  ) +
+  geom_text_repel(data = vim, aes(label = pull(vim,gene)), 
+                  max.overlaps = 10, 
+                  size = 3, 
+                  box.padding = 0.4, 
+                  point.padding = 0.3, 
+                  segment.color = 'grey50')+
+  ylim(0,500)
+volcano_plot
+
+ggsave((paste0(output_path,
+               "/VIM_volcano_plot___hIO___M_vs_E___DESeq___all_cell_lines", ".png")), width = 20, height = 20)
+```
+
+
+
+```{r}
+count_tbl |> names()
+
+meta_data |> filter(cell_line=="BIHi005-A")
+```
+
+```{r}
+meta_data_unmix_1<- meta_data |> filter(cell_line=="BIHi005-A")
+
+count_mtx <- count_tbl |> select(all_of(pull(meta_data_unmix_1, sample))) |> as.matrix()
+
+
+
+
+rownames(count_mtx) <- pull(count_tbl,gene)
+
+
+dds <- DESeqDataSetFromMatrix(
+    countData = count_mtx,
+    colData = meta_data_unmix_1 |> mutate(tissue_type=paste(sep="_",tissue_type,sequencing_type)),
+    ~1
+)
+
+dds<- estimateSizeFactors(dds) 
+dds<- estimateDispersions(dds) 
+sizeFactors(dds)
+
+norm.cts <- counts(dds, normalized=TRUE)
+
+dispersionFunction(dds)
+
+pure <- norm.cts[, c("E-hIO-BIHi005-A", "M-hIO-BIHi005-A")]
+norm.cts <- norm.cts[, setdiff(colnames(norm.cts), colnames(pure))]
+
+mix_alpha_0.67 <- unmix(norm.cts, pure, alpha=0.6718558 ) |> as_tibble(rownames="library")
+mix_alpha_1 <- unmix(norm.cts, pure, alpha=1 ) |> as_tibble(rownames="library")
+
+mix_alpha_0.67
+mix_alpha_1
+
+mix_alpha_0.67_top_genes <- unmix(norm.cts[top_genes_vec_20,], pure[top_genes_vec_20,], alpha=0.6718558 ) |> as_tibble(rownames="library")
+
+mix_alpha_0.67_KRT8_ERBB4 <- unmix(norm.cts[c("KRT8","ERBB4"),], pure[c("KRT8","ERBB4"),], alpha=0.6718558 ) |> as_tibble(rownames="library")
+
+mix_alpha_0.67_KRT8_ERBB4 <- unmix(norm.cts[c("KRT8","ERBB4"),], pure[c("CLDN4","EPHA3"),], alpha=0.6718558 ) |> as_tibble(rownames="library")
+
+
+options(scipen = 999)
+
+```
+
+```{r}
+res_shrink_neg_pos_tbl <- res_schrink |> mutate(neg_pos=if_else(log2FoldChange>0,"pos","neg"))
+
+mix_tbl <- tibble()
+colnames(mix_tbl) <- colnames(mix_alpha_1)
+
+for (i in c(1:5,seq(6,1000,by=5),seq(1000,3000,by=50))) {
+  top_genes_vec_i <- res_shrink_neg_pos_tbl |> group_by(neg_pos ) |> slice_min(padj,n=i) |> pull(gene)
+  mix_alpha_0.67_i <- unmix(norm.cts[top_genes_vec_i,], pure[top_genes_vec_i,], alpha=0.6718558 ) |> as_tibble(rownames="library") |> mutate(gene_num=i)
+  mix_tbl <- bind_rows(mix_tbl,mix_alpha_0.67_i)
+}
+
+
+
+plot_title <- "DESeq2 umix, varying genes, m propotion from BIHi005-A sc expression"
+plot_subtitle <- dataset_name
+plot_caption <- ""
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+mix_tbl |>
+  janitor::clean_names() |> 
+  ggplot(aes(m_h_io_bi_hi005_a,gene_num, color=library)) +
+    geom_point() + 
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption) + theme_bw()
+
+colnames(mix_tbl) <- c("library", "E_proportion", "M_proportion", "gene_num")
+mix_tbl |> 
+  left_join(filter(meta_data, cell_line=="BIHi005-A") |> rename(sample="library")) |> 
+  mutate(sample=paste0(sequencing_type,"_", processing)) |> 
+  ggplot(aes(M_proportion,gene_num, color=sample))+
+  geom_point() + 
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption) +
+  theme_bw()
+
+ggsave_png_and_eps(output_path,plot_name)
+```
+
+
+```{r}
+res_shrink_neg_pos_tbl <- res_schrink |> mutate(neg_pos=if_else(log2FoldChange>0,"pos","neg"))
+
+mix_tbl <- tibble()
+colnames(mix_tbl) <- colnames(mix_alpha_1)
+
+for (i in c(1:5,seq(6,1000,by=5),seq(1000,5000,by=50))) {
+  top_genes_vec_i <- res_shrink_neg_pos_tbl |> group_by(neg_pos ) |> slice_max(baseMean,n=i) |> pull(gene)
+  mix_alpha_0.67_i <- unmix(norm.cts[top_genes_vec_i,], pure[top_genes_vec_i,], alpha=0.6718558 ) |> as_tibble(rownames="library") |> mutate(gene_num=i)
+  mix_tbl <- bind_rows(mix_tbl,mix_alpha_0.67_i)
+}
+
+
+
+plot_title <- "DESeq2 umix, varying genes by baseMEan, m propotion from BIHi005-A sc expression"
+plot_subtitle <- dataset_name
+plot_caption <- ""
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+
+
+mix_tbl |>
+  janitor::clean_names() |> 
+  ggplot(aes(m_h_io_bi_hi005_a,gene_num, color=library)) +
+    geom_point() + 
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption) + theme_bw()
+
+colnames(mix_tbl) <- c("library", "E_proportion", "M_proportion", "gene_num")
+mix_tbl |> 
+  left_join(filter(meta_data, cell_line=="BIHi005-A") |> rename(sample="library")) |> 
+  mutate(sample=paste0(sequencing_type,"_", processing)) |> 
+  ggplot(aes(M_proportion,gene_num, color=sample))+
+  geom_point() + 
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption) +
+  theme_bw()
+
+
+ggsave_png_and_eps(output_path,plot_name)
+```
+
+```{r}
+res_shrink_neg_pos_tbl <- res_schrink |> mutate(neg_pos=if_else(log2FoldChange>0,"pos","neg"))
+
+mix_tbl <- tibble()
+colnames(mix_tbl) <- colnames(mix_alpha_1)
+res_shrink_neg_pos_tbl_largest <-  res_shrink_neg_pos_tbl |>  group_by(neg_pos ) |> slice_max(baseMean,n=5000) 
+for (i in c(1:5,seq(6,250,by=5), seq(250,5000,by=50))) {
+  top_genes_vec_i <-  res_shrink_neg_pos_tbl_largest |> group_by(neg_pos ) |>  slice_sample(n=i)|> pull(gene)
+  mix_alpha_0.67_i <- unmix(norm.cts[top_genes_vec_i,], pure[top_genes_vec_i,], alpha=0.6718558 ) |> as_tibble(rownames="library") |> mutate(gene_num=i)
+  mix_tbl <- bind_rows(mix_tbl,mix_alpha_0.67_i)
+}
+
+
+
+plot_title <- "DESeq2 umix, varying gene number, randomly selectiong from  5000 most expressed genes, m propotion from BIHi005-A sc expression"
+plot_subtitle <- dataset_name
+plot_caption <- ""
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+mix_tbl |>
+  janitor::clean_names() |> 
+  ggplot(aes(m_h_io_bi_hi005_a,gene_num, color=library)) +
+    geom_point() + 
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption) + theme_bw()
+
+#gsave_png_and_eps(output_path,plot_name)
+
+
+
+
+colnames(mix_tbl) <- c("library", "E_proportion", "M_proportion", "gene_num")
+mix_tbl |> 
+  left_join(filter(meta_data, cell_line=="BIHi005-A") |> rename(sample="library")) |> 
+  mutate(sample=paste0(sequencing_type,"_", processing)) |> 
+  ggplot(aes(M_proportion,gene_num, color=sample))+
+  geom_point() + 
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption) +
+  theme_bw()
+ggsave_png_and_eps(output_path,plot_name)
+```
+
+
+#####
+
+```{r}
+meta_data_unmix_1<- meta_data |> filter(cell_line=="BIHi005-A")
+
+count_mtx <- count_tbl |> select(all_of(pull(meta_data_unmix_1, sample))) |> as.matrix()
+
+rownames(count_mtx) <- pull(count_tbl,gene)
+
+
+dds <- DESeqDataSetFromMatrix(
+    countData = count_mtx,
+    colData = meta_data_unmix_1 |> mutate(tissue_type=paste(sep="_",tissue_type,sequencing_type)),
+    ~1
+)
+
+dds<- estimateSizeFactors(dds) 
+dds<- estimateDispersions(dds) 
+sizeFactors(dds)
+dispersions(dds) |> length()
+```
+
+
+```{r}
+norm.cts <- counts(dds, normalized=TRUE)
+
+dispersionFunction(dds)
+
+pure <- norm.cts[, c("E-hIO-BIHi005-A", "M-hIO-BIHi005-A")]
+norm.cts <- norm.cts[, setdiff(colnames(norm.cts), colnames(pure))]
+
+mix_alpha_0.67 <- unmix(norm.cts, pure, alpha=0.6718558 ) |> as_tibble(rownames="library")
+mix_alpha_1 <- unmix(norm.cts, pure, alpha=1 ) |> as_tibble(rownames="library")
+
+mix_alpha_0.67
+mix_alpha_1
+
+mix_alpha_0.67_top_genes <- unmix(norm.cts[top_genes_vec_20,], pure[top_genes_vec_20,], alpha=0.6718558 ) |> as_tibble(rownames="library")
+
+mix_alpha_0.67_KRT8_ERBB4 <- unmix(norm.cts[c("KRT8","ERBB4"),], pure[c("KRT8","ERBB4"),], alpha=0.6718558 ) |> as_tibble(rownames="library")
+
+mix_alpha_0.67_KRT8_ERBB4 <- unmix(norm.cts[c("KRT8","ERBB4"),], pure[c("CLDN4","EPHA3"),], alpha=0.6718558 ) |> as_tibble(rownames="library")
+
+
+options(scipen = 999)
+mix_alpha_0.67_KRT8_ERBB4
+```
+
+
+# batch correction
+```{r}
+mat <- assay(vsd)
+
+mm <- model.matrix(~cell_line, colData(vsd))
+mat <- limma::removeBatchEffect(mat, batch=vsd$sequencing_type, design=mm)
+assay(vsd) <- mat
+
+
+
+plotPCA(vsd,intgroup=c("tissue_type"))+ggtitle("batch-corrected")
+plotPCA(vsd,intgroup=c("cell_line"))+ggtitle("batch-corrected")
+plotPCA(vsd,intgroup=c("processing"))+ggtitle("batch-corrected")
+```
+
+```{r}
+plotPCA(vsd,intgroup=c("tissue_type"), pcsToUse = 3:4 )+ggtitle("batch-corrected")
+plotPCA(vsd,intgroup=c("sequencing_type"), pcsToUse = 3:4 )+ggtitle("batch-corrected")
+plotPCA(vsd,intgroup=c("cell_line"), pcsToUse = 3:4 )+ggtitle("batch-corrected")
+plotPCA(vsd,intgroup=c("processing"), pcsToUse = 3:4 )+ggtitle("batch-corrected")
+```
+
+```{r}
+self_unmix_dat <- vsd@assays@data[[1]][,pull(meta_data_unmix_1, sample)]
+
+pure <- self_unmix_dat[,5:6]
+x <- self_unmix_dat[,1:4]
+
+
+sumLoss <- function(p, i) {
+            sum(abs(x[, i]  - (pure %*% p)))} # %*% matrix mulitplikation
+# x[, i] will refer to the bulk dataset
+
+
+res <- lapply(seq_len(ncol(x)), function(i) {
+            optim(par = rep(1, ncol(pure)), fn = sumLoss, 
+                gr = NULL, i, method = "L-BFGS-B", 
+                lower = 0.000001, upper = 100)$par})
+# for each bulk set (column number ) optimize sumloss
+res |> rbind()
+
+mix <- do.call(rbind, res)
+mix <- mix/MatrixGenerics::rowSums(mix)
+colnames(mix) <- colnames(pure)
+rownames(mix) <- colnames(x)
+```
+
+```{r}
+
+unmix_selfcooked <- function(x,pure){
+  sumLoss <- function(p, i) {
+            sum(abs(x[, i]  - (pure %*% p)))}
+  res <- lapply(seq_len(ncol(x)), function(i) {
+            optim(par = rep(1, ncol(pure)), fn = sumLoss, 
+                gr = NULL, i, method = "L-BFGS-B", 
+                lower = 0.000001, upper = 100)$par})
+  res |> rbind()
+  mix <- do.call(rbind, res)
+  mix <- mix/MatrixGenerics::rowSums(mix)
+  colnames(mix) <- colnames(pure)
+  rownames(mix) <- colnames(x)
+  return(mix|> as_tibble(rownames="library"))
+
+}
+
+
+unmix_selfcooked(x, pure=pure)
+```
+
+
+```{r}
+res_shrink_neg_pos_tbl <- res_schrink |> mutate(neg_pos=if_else(log2FoldChange>0,"pos","neg"))
+
+mix_tbl_self <- tibble()
+colnames(mix_tbl_self) <- colnames(mix_alpha_1)
+
+for (i in c(1:5,seq(6,1000,by=5),seq(1000,3000,by=50),
+            seq(3000,5000,by=100))) {
+  top_genes_vec_i <- res_shrink_neg_pos_tbl |> group_by(neg_pos ) |> slice_min(padj,n=i) |> pull(gene)
+  mix_alpha_selfcooked <- unmix_selfcooked(x[top_genes_vec_i,], pure[top_genes_vec_i,]) |>   mutate(gene_num=i)
+  mix_tbl_self <- bind_rows(mix_tbl_self,mix_alpha_selfcooked)
+  print(i)
+}
+
+
+plot_title <- "Unmix selfcooked, varying genes, m propotion from BIHi005-A sc expression"
+plot_subtitle <- dataset_name
+plot_caption <- ""
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+colnames(mix_tbl_self) <- c("library", "E_proportion", "M_proportion", "gene_num")
+mix_tbl_self |>
+  left_join(filter(meta_data, cell_line=="BIHi005-A") |> rename(sample="library")) |> 
+  mutate(sample=paste0(sequencing_type,"_", processing)) |> 
+  ggplot(aes(M_proportion,gene_num, color=sample)) +
+  
+    geom_point() + 
+  xlim(0,1)+
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption) + theme_bw()
+
+ggsave_png_and_eps(output_path,plot_name)
+```
+```{r}
+obj |> 
+  group_by(m_e_class, cell_line_cellranger) |> 
+  summarise(n=n()) |> 
+  group_by(cell_line_cellranger,m_e_class) |>
+  summarise(freq=n()/sum(n))
+```
+
+
+# regularize
+
+```{r}
+
+
+
+unmix_selfcooked_regularized <- function(x,pure,lambda){
+sumLoss <- function(p, i, lambda) {
+  # Residuals between observed and predicted values
+  residuals <- abs(x[, i] - (pure %*% p))
+  
+  # Regularization term using a T-distribution-like penalty
+  penalty <- sum(log(1 + (p^2)))
+
+  # Combine the loss and the penalty, scaled by lambda
+  sum(residuals) + lambda * penalty
+}
+
+# Using lapply to optimize for each column of x
+# Set the regularization strength (you may need to tune this value)
+res <- lapply(seq_len(ncol(x)), function(i) {
+  optim(par = rep(1, ncol(pure)), 
+        fn = sumLoss, 
+        gr = NULL, 
+        i = i, 
+        lambda = lambda,
+        method = "L-BFGS-B", 
+        lower = 0.000001, 
+        upper = 100)$par
+})
+  res |> rbind()
+  mix <- do.call(rbind, res)
+  mix <- mix/MatrixGenerics::rowSums(mix)
+  colnames(mix) <- colnames(pure)
+  rownames(mix) <- colnames(x)
+  return(mix|> as_tibble(rownames="library"))
+
+}
+
+
+unmix_selfcooked(x, pure=pure)
+
+
+```
+
+```{r}
+res_shrink_neg_pos_tbl <- res_schrink |> mutate(neg_pos=if_else(log2FoldChange>0,"pos","neg"))
+
+mix_tbl_self_regularized <- tibble()
+colnames(mix_tbl_self_regularized) <- colnames(mix_alpha_1)
+
+for (i in c(1:5,seq(6,1000,by=5),seq(1000,3000,by=50),
+            seq(3000,5000,by=100))) {
+  top_genes_vec_i <- res_shrink_neg_pos_tbl |> group_by(neg_pos ) |> slice_min(padj,n=i) |> pull(gene)
+  mix_alpha_selfcooked <- unmix_selfcooked_regularized(x[top_genes_vec_i,], pure[top_genes_vec_i,], lambda = 0.5) |>   mutate(gene_num=i)
+  mix_tbl_self_regularized <- bind_rows(mix_tbl_self_regularized,mix_alpha_selfcooked)
+  print(i)
+}
+
+
+plot_title <- "Unmix selfcooked, regularized  varying genes, m propotion from BIHi005-A sc expression"
+plot_subtitle <- dataset_name
+plot_caption <- ""
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+colnames(mix_tbl_self_regularized) <- c("library", "E_proportion", "M_proportion", "gene_num")
+mix_tbl_self_regularized |>
+  left_join(filter(meta_data, cell_line=="BIHi005-A") |> rename(sample="library")) |> 
+  mutate(sample=paste0(sequencing_type,"_", processing)) |> 
+  ggplot(aes(M_proportion,gene_num, color=sample)) +
+  
+    geom_point() + 
+  xlim(0,1)+
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption) + theme_bw()
+
+ggsave_png_and_eps(output_path,plot_name)
+```
+
+
+# batch correction for highly differentially expressed genes
+```{r}
+count_mtx <- count_tbl |> distinct(gene ,.keep_all = T) |> select(-gene) |> as.matrix()
+
+rownames(count_mtx) <- count_tbl |> distinct(gene ,.keep_all = T)  |>  pull( gene)
+
+count_mtx_top <- count_mtx[res_shrink_neg_pos_tbl |> group_by(neg_pos ) |> slice_min(padj,n=500) |> pull(gene),]
+
+dds_top <- DESeqDataSetFromMatrix(
+    countData =  count_mtx_top[,pull(meta_data, sample)],
+    colData = meta_data |> mutate(tissue_type=paste(sep="_",tissue_type,sequencing_type)),
+    design = ~ cell_line + tissue_type
+)
+dds_top <- dds_top[rowSums(counts(dds_top)) > 10, ]
+dds_top <- DESeq(dds_top)
+vsd_top <- vst(dds_top)
+
+
+mat <- assay(vsd_top)
+mm <- model.matrix(~cell_line, colData(vsd_top))
+mat <- limma::removeBatchEffect(mat, batch=vsd_top$sequencing_type, design=mm)
+assay(vsd_top) <- mat
+
+plot_title <- "batch corrected, tissue type"
+plot_subtitle <- dataset_name
+plot_caption <- ""
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+
+plotPCA(vsd_top,intgroup=c("tissue_type"))+
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption) + theme_bw()
+ggsave_png_and_eps(output_path,plot_name)
+
+
+plot_title <- "batch corrected, cell line"
+plot_subtitle <- dataset_name
+plot_caption <- ""
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+
+plotPCA(vsd_top,intgroup=c("cell_line"))+
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption) + theme_bw()
+ggsave_png_and_eps(output_path,plot_name)
+
+plot_title <- "batch corrected, processing"
+plot_subtitle <- dataset_name
+plot_caption <- ""
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+
+plotPCA(vsd_top,intgroup=c("processing"))+
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption) + theme_bw()
+ggsave_png_and_eps(output_path,plot_name)
+
+
+
+plotPCA(vsd_top,intgroup=c("cell_line"))+ggtitle("batch-corrected")
+plotPCA(vsd_top,intgroup=c("processing"))+ggtitle("batch-corrected")
+```
+```{r}
+res_shrink_neg_pos_tbl <- res_schrink |> mutate(neg_pos=if_else(log2FoldChange>0,"pos","neg"))
+
+mix_tbl_self_top <- tibble()
+colnames(mix_tbl_self_top) <- colnames(mix_alpha_1)
+
+for (i in c(1:5,seq(6,500,by=5))) {
+  top_genes_vec_i <- res_shrink_neg_pos_tbl |> group_by(neg_pos ) |> slice_min(padj,n=i) |> pull(gene)
+  mix_alpha_selfcooked <- unmix_selfcooked(x[top_genes_vec_i,], pure[top_genes_vec_i,]) |>   mutate(gene_num=i)
+  mix_tbl_self_top <- bind_rows(mix_tbl_self_top,mix_alpha_selfcooked)
+  print(i)
+}
+
+
+plot_title <- "Unmix selfcooked, only diff genes, varying genes, m propotion from BIHi005-A sc expression"
+plot_subtitle <- dataset_name
+plot_caption <- ""
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+colnames(mix_tbl_self_top) <- c("library", "E_proportion", "M_proportion", "gene_num")
+mix_tbl_self_top |>
+  left_join(filter(meta_data, cell_line=="BIHi005-A") |> rename(sample="library")) |> 
+  mutate(sample=paste0(sequencing_type,"_", processing)) |> 
+  ggplot(aes(M_proportion,gene_num, color=sample)) +
+  
+    geom_point() + 
+  xlim(0,1)+
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption) + theme_bw()
+
+ggsave_png_and_eps(output_path,plot_name)
+```
+
+```{r}
+count_tbl_x <- assay(vsd) |> as_tibble(rownames="gene") 
+
+  
+count_tbl_x |> 
+  mutate(gene_mean_expression=rowSums(assay(vsd))/ncol(assay(vsd))) |> 
+  pivot_longer(!starts_with("gene"), names_to = "sample") |> 
+  left_join(meta_data) |> 
+  
+  group_by(sample) |>  mutate(count_fraction_quantile= ntile(count_fraction, 20)) |> 
+  group_by(sample,count_fraction_quantile) |> 
+  mutate(sum_count_fraction=sum(count_fraction)) |> 
+  distinct() |> 
+  ggplot(aes(count_fraction_quantile,sum_count_fraction,color=sequencing_type))+
+  geom_point()+
+  theme_bw()
+```
+
+```{r}
+x |> 
+  #mutate(average_expression_binned = cut(log10_gene_rank, breaks = seq(5, 16, by = 0.25))) |> 
+  #mutate(sequencing_type=ifelse(sequencing_type %in% c("3pseq"),"three_p_seq",sequencing_type)) |> 
+  mutate(bulk_or_sc=ifelse(sequencing_type %in% c("polyA", "3pseq"),"bulk","sc")) |> 
+  select(gene, sequencing_type,count_fraction_10e6#, processing,bulk_or_sc
+         ) |> 
+  pivot_wider(names_from = sequencing_type,
+              values_from = count_fraction_10e6,
+              values_fn= mean) |> 
+  janitor::clean_names() |> 
+  group_by(gene) |> 
+  summarise(mean_poly_a=mean(poly_a, na.rm=T),
+            mean_3pseq=mean(x3pseq, na.rm=T),
+            mean_sc=mean(single_cell, na.rm=T))
+```
+#DWLS
+```{r}
+S <- x
+B <- pure
+solveOLS<-function(S,B){
+  D<-t(S)%*%S #sum of squares of all genes per SIGNATURE library
+  d<-t(S)%*%B# sum of squares of all genes per BULK library
+  A<-cbind(diag(dim(S)[2])) #dim()[2]: =ncol(), make diagonal matrix with those dimensions
+  bzero<-c(rep(0,dim(S)[2])) #dim()[2]: =ncol(), zero vector of that length
+  solution<-solve.QP(D,d,A,bzero)$solution
+  names(solution)<-colnames(S)
+  print(round(solution/sum(solution),5))
+  return(solution/sum(solution))
+}
+```
+

@@ -1,0 +1,474 @@
+---
+title: "explore_bayes_prism"
+format: html
+editor: visual
+---
+
+```{r}
+library(Seurat)
+library(tidyverse)
+library(tidyseurat)
+library(BayesPrism)
+library(readxl)
+library(janitor)
+library(patchwork)
+#library(biomaRt) gives problems with "select"
+library(InstaPrism)
+library(here)
+```
+
+
+```{r}
+dataset_name <- "hub_01"
+path_raw_data_file <-  here("../../raw_data/cubi_cusco")
+path_output_file <- here("output", "BayesPrism_5_clustsers")
+obj <- read_rds(here("intermediate_data",
+                     paste0( dataset_name, "_integrated_", ".rds")))
+combined_bulk<- read.csv(paste0(path_raw_data_file,"/hub_01_02_bulk\\counts_table_hub_01_02.csv"))
+hub_01_meta_data <- read_csv(here("intermediate_data","hub_01_meta_data.csv")) |> rename(processing="name_2") |> mutate(sample=str_replace_all(sample, "-","."))
+```
+
+
+## select matching bulk samples according to sodar meta data
+
+```{r}
+hub_01_bulk_library_names <- hub_01_meta_data |> filter(experiment_identifier=="HUB_01") |> pull(sample) |> str_replace("-",".")
+
+combined_bulk <- combined_bulk |>  select(-gene,-X)
+bk.dat <- combined_bulk[,hub_01_bulk_library_names] |> as.matrix() |>  t()
+colnames(bk.dat) <- combined_bulk |> pull(ensembl_gene_id)
+bk.dat[1:8,1:5]
+```
+
+## chose cell state labels
+
+```{r}
+grouping <- "harmony_clusters_res0.1"
+red <- "umap.mnn"
+obj |> DimPlot(reduction = "umap.mnn", label = T, group.by = grouping)
+ggsave(paste0(path_output_file, "/hub_01_dimplot_",red, "_", grouping, "harmony_clusters_res0.1", ".png"))
+```
+
+
+```{r}
+obj |> DimPlot(reduction = "umap.mnn", label = T, group.by = "harmony_clusters_res0.4" )
+ggsave(paste0(path_output_file, "/hub_01_dimplot_",red, "_", grouping, "harmony_clusters_res0.4", ".png"))
+```
+
+
+```{r}
+FeaturePlot(obj, features = "EPCAM", reduction = "umap.mnn", label = T)
+ggsave(paste0(path_output_file, "/hub_01_feature_","EPCAM" ,".png"))
+```
+
+
+```{r}
+grouping <- "m_e_class"
+red <- "umap.mnn"
+obj |> DimPlot(reduction = red, label = T, group.by = grouping) + coord_fixed()
+ggsave(paste0(path_output_file, "/hub_01_dimplot_",red, "_", grouping, ".png"))
+```
+
+
+```{r}
+cell.type.labels <- obj |> pull(m_e_class)
+
+obj |> ggplot(aes(cell_line_cellranger, fill = m_e_class )) + geom_bar()+
+  theme_bw()
+ggsave(paste0(path_output_file, "/hub_01_barplot_numbers_m_e_per_cellline.png"))
+
+
+```
+
+## chose cell state labels
+
+```{r}
+cell.state.labels <- obj |> pull(harmony_clusters_res0.1) |> as.character()
+
+obj |> ggplot(aes(cell_line_cellranger, fill = harmony_clusters_res0.1, colour = m_e_class)) + geom_bar(linewidth=1)+
+  scale_color_manual(values=c("black", "red"))+
+  theme_bw()
+
+ggsave(paste0(path_output_file, "/hub_01_barplot_numbers_harmony_clusters_res0.1.png"))
+
+```
+
+## prepare single cell data for reference
+
+```{r}
+sc.dat <- obj@assays$uncorrected_RNA@layers$counts |> as.matrix() 
+
+# Define your list of gene names
+gene_names <- rownames(obj)
+
+# Use the Ensembl database for humans (change the dataset for different species)
+ensembl <- biomaRt::useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+
+# Query Ensembl to get the Ensembl Gene IDs for your list of gene names
+gene_mapping <- biomaRt::getBM(
+  filters = "hgnc_symbol",    # Filter based on HGNC gene symbols
+  attributes = c("hgnc_symbol", "ensembl_gene_id"),  # Retrieve HGNC symbols and Ensembl Gene IDs
+  values = gene_names,        # The list of gene names to map
+  mart = ensembl
+)
+
+gene_vec <- gene_mapping$ensembl_gene_id
+names(gene_vec)<- gene_mapping$hgnc_symbol
+ensgs <- gene_names[grepl("ENSG", gene_names)]
+hpc<- gene_names[!grepl("ENSG", gene_names)]
+
+hpc_to_ensgs <- gene_vec[hpc]
+
+colnames(sc.dat) <- colnames(obj)
+
+colnames(sc.dat) <- colnames(obj)
+rownames(sc.dat) <- rownames(obj)
+sc.dat <- sc.dat[c(ensgs,hpc),]
+rownames(sc.dat) <- c(ensgs, hpc_to_ensgs)
+
+sc.dat <- sc.dat |> t()
+
+sc.dat[1:10,1:10]
+```
+
+```{r}
+genes_keep_2 <- intersect(colnames(sc.dat),colnames(bk.dat))
+
+bk.dat <- bk.dat[,genes_keep_2]
+sc.dat <- sc.dat[,genes_keep_2]
+
+dim(bk.dat)
+dim(sc.dat)
+```
+
+```{r}
+# once for ploting here once for saving
+plot.cor.phi(input=sc.dat,
+                         input.labels=cell.state.labels,
+                         title="cell state correlation",
+                         #specify pdf.prefix if need to output to pdf
+                         #pdf.prefix="gbm.cor.cs", 
+                         cexRow=0.2, cexCol=0.2,
+                         margins=c(2,2)) 
+
+plot.cor.phi(input=sc.dat,
+                         input.labels=cell.state.labels,
+                         title="cell state correlation",
+                         #specify pdf.prefix if need to output to pdf
+                         #pdf.prefix="gbm.cor.cs", 
+                         cexRow=0.2, cexCol=0.2,
+                         margins=c(2,2),
+                  pdf.prefix = paste0(path_output_file ,"/cell_state")) 
+
+
+```
+
+```{r}
+plot.cor.phi (input=sc.dat, 
+                         input.labels=cell.type.labels, 
+                         title="cell type correlation",
+                         #specify pdf.prefix if need to output to pdf
+                         #pdf.prefix="gbm.cor.ct",
+                         cexRow=0.5, cexCol=0.5,
+              pdf.prefix = paste0(path_output_file ,"/cell_type")
+                         )
+
+plot.cor.phi (input=sc.dat, 
+                         input.labels=cell.type.labels, 
+                         title="cell type correlation",
+                         #specify pdf.prefix if need to output to pdf
+                         #pdf.prefix="gbm.cor.ct",
+                         cexRow=0.5, cexCol=0.5,
+              #pdf.prefix = paste0(path_output_file ,"/cell_type")
+                         )
+
+```
+
+```{r}
+sc.stat <- plot.scRNA.outlier(
+  input=sc.dat, #make sure the colnames are gene symbol or ENSMEBL ID 
+  cell.type.labels=cell.type.labels,
+  species="hs", #currently only human(hs) and mouse(mm) annotations are supported
+  return.raw=TRUE #return the data used for plotting. 
+  #pdf.prefix="gbm.sc.stat" specify pdf.prefix if need to output to pdf
+)
+
+
+sc.stat <- plot.scRNA.outlier(
+  input=sc.dat, #make sure the colnames are gene symbol or ENSMEBL ID 
+  cell.type.labels=cell.type.labels,
+  species="hs", #currently only human(hs) and mouse(mm) annotations are supported
+  return.raw=TRUE, #return the data used for plotting. 
+  pdf.prefix = paste0(path_output_file ,"/plot.scRNA.outlier")
+)
+```
+
+```{r}
+head(sc.stat)
+```
+
+```{r}
+bk.stat <- plot.bulk.outlier(
+  bulk.input=bk.dat,#make sure the colnames are gene symbol or ENSMEBL ID 
+    sc.input=sc.dat, #make sure the colnames are gene symbol or ENSMEBL ID 
+  cell.type.labels=cell.type.labels,
+  species="hs", #currently only human(hs) and mouse(mm) annotations are supported
+  return.raw=TRUE,
+  pdf.prefix = paste0(path_output_file ,"/gbm.bk.stat") #specify pdf.prefix if need to output to pdf
+)
+
+bk.stat <- plot.bulk.outlier(
+  bulk.input=bk.dat,#make sure the colnames are gene symbol or ENSMEBL ID 
+    sc.input=sc.dat, #make sure the colnames are gene symbol or ENSMEBL ID 
+  cell.type.labels=cell.type.labels,
+  species="hs", #currently only human(hs) and mouse(mm) annotations are supported
+  return.raw=TRUE,
+  #pdf.prefix = paste0(path_output_file ,"/gbm.bk.stat") #specify pdf.prefix if need to output to pdf
+)
+```
+
+```{r}
+sc.dat.filtered <- cleanup.genes (input=sc.dat,
+                                  input.type="count.matrix",
+                                    species="hs", 
+                                    gene.group=c( "Rb","Mrp","other_Rb","chrM","MALAT1","chrX","chrY") ,
+                                    exp.cells=5)
+```
+
+```{r}
+plot.bulk.vs.sc (sc.input = sc.dat.filtered,
+                            bulk.input = bk.dat#,
+                            #pdf.prefix = paste0(path_output_file ,"/gbm.bk.vs.sc") #specify pdf.prefix if need to output to pdf
+)
+
+plot.bulk.vs.sc (sc.input = sc.dat.filtered,
+                            bulk.input = bk.dat,
+                            pdf.prefix = paste0(path_output_file ,"/gbm.bk.vs.sc") #specify pdf.prefix if need to output to pdf
+)
+```
+
+```{r}
+sc.dat.filtered.pc <-  select.gene.type (sc.dat.filtered,
+                                        gene.type = "protein_coding")
+```
+
+```{r}
+diff.exp.stat <- get.exp.stat(sc.dat=sc.dat[,colSums(sc.dat>0)>50],# filter genes to reduce memory use
+                                          cell.type.labels=cell.type.labels,
+                                          cell.state.labels=cell.state.labels,
+                                          #psuedo.count=0.1, #a numeric value used for log2 transformation. =0.1 for 10x data, =10 for smart-seq. Default=0.1.
+                                          cell.count.cutoff=50, # a numeric value to exclude cell state with number of cells fewer than this value for t test. Default=50.
+                                          n.cores=1 #number of threads
+                                          )
+```
+
+```{r}
+sc.dat.filtered.pc.sig <- select.marker(sc.dat=sc.dat.filtered.pc,
+                                                  stat=diff.exp.stat,
+                                                  pval.max=0.01,
+                                                  lfc.min=3)
+
+write_rds(sc.dat.filtered.pc.sig, file = here("intermediate_data", "BayesPrsim_hub_01_sc.dat.filtered.pc.sig.rds") )
+```
+
+```{r}
+myPrism <- new.prism(
+  reference=sc.dat.filtered.pc, 
+  mixture=bk.dat,
+  input.type="count.matrix", 
+  cell.type.labels = cell.type.labels, 
+  cell.state.labels = cell.state.labels,
+  key=NULL,
+  outlier.cut=0.01,
+    outlier.fraction=0.1,
+)
+
+
+```
+
+
+
+```{r}
+# # bulk input with genes in rows and samples in columns; this example data is from ovarian cancer
+# bulk_expr = read.csv(system.file('extdata','example_bulk.csv',package = 'InstaPrism')) 
+# 
+# # load built-in reference; choose a reference that matches the tumor type of the bulk input
+# OV_ref = InstaPrism_reference('OV') 
+# 
+# ctl <-  cell.type.labels
+# csl <-  cell.state.labels
+# 
+# refPhi_obj = refPrepare(sc_Expr = sc.dat.filtered.pc, cell.type.labels = ctl, cell.state.labels = csl)
+# 
+# refPrepare(sc_Expr = sc.dat.filtered.pc, cell.type.labels = cell.type.labels, cell.state.labels = cell.state.labels)
+# 
+# # deconvolution with InstaPrism
+# deconv_res = InstaPrism(bulk_Expr = as.data.frame(bk.dat),
+#                         refPhi_cs = sc.dat.filtered.pc)
+# 
+# # The deconvoled cell type fraction is now accessible with
+# estimated_frac = t(deconv_res@Post.ini.ct@theta)
+# head(estimated_frac)
+# 
+# # InstaPrism also returns the deconvolved gene expression Z
+# Z = get_Z_array(deconv_res) # a sample by gene by cell-type array
+# head(Z[,1:10,'malignant'])
+```
+
+```{r}
+
+InstaPrism.res.initial = InstaPrism(input_type = 'prism',prismObj = myPrism,n.core = 16)
+
+proportions_cell_states <- InstaPrism.res.initial@Post.ini.cs@theta |> as_tibble(rownames="cluster")
+
+proportions_cell_types <- InstaPrism.res.initial@Post.ini.ct@theta |> as_tibble(rownames="cluster")
+
+```
+
+
+```{r}
+proportions_cell_states |>
+  pivot_longer(GEX.BLK_0084_polyA:GEX.BLK_0086_3pseq,
+               names_to = "sample" ,
+               values_to = "fraction") |> 
+  left_join(hub_01_meta_data) |> 
+  ggplot(aes(sample,fraction, fill = cluster))+
+  geom_col()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  facet_grid(~cell_line,scales = "free_x", space = "free_x")
+  
+ggsave(paste0(path_output_file, "/BayesPrismProportions_cell_states.png")) 
+```
+```{r}
+sc_counts_me <- obj |>
+  group_by(cell_line_cellranger, m_e_class) |>
+  summarise(n=n())|>
+  mutate(fraction=n/sum(n)) |>
+  separate(cell_line_cellranger, sep = "_", c("organoid_type",
+                                   "cell_line")) 
+
+
+sc_counts_harmony_clusters_res0.1 <- obj |>
+  group_by(cell_line_cellranger, harmony_clusters_res0.1) |>
+  summarise(n=n())|>
+  mutate(fraction=n/sum(n)) |>
+  separate(cell_line_cellranger, sep = "_", c("organoid_type",
+                                   "cell_line")) |> 
+  rename(fraction_bulk="fraction",
+        cluster="harmony_clusters_res0.1" ) |> 
+  select(cell_line, cluster,fraction_bulk )
+
+sc_counts_me
+sc_counts_harmony_clusters_res0.1
+```
+
+
+```{r}
+dat <- proportions_cell_states |>
+  pivot_longer(starts_with("GEX"),
+               names_to = "sample" ,
+               values_to = "fraction") |> 
+  left_join(select(hub_01_meta_data, cell_line,processing, sample)) |> 
+  left_join(sc_counts_harmony_clusters_res0.1)
+dat
+```
+
+
+```{r}
+dat|> 
+  separate(processing, into = c("processing")) |> 
+  ggplot(aes(fraction, fraction_bulk)) +
+  geom_point()+
+  geom_abline(intercept = 0, slope = 1, color="red")+
+  facet_wrap(~sample,scales = "free_x")
+
+ggsave(paste0(path_output_file, "/fraction_corr_plot.png")) 
+```
+
+```{r}
+proportions_cell_states |>
+  pivot_longer(starts_with("GEX"),
+               names_to = "sample" ,
+               values_to = "fraction") |> 
+  left_join(select(hub_01_meta_data, cell_line,processing, sample)) |> 
+  left_join(rename(sc_counts_harmony_clusters_res0.1,cell_line_bulk="cell_line"))|>
+  mutate(p.log.p_over_q=fraction_bulk*log2(fraction_bulk/fraction)) |>
+  
+  
+  separate(sample, into = c("n0", "n1", "seq_method" ), sep="_") |> 
+  separate(processing, into = c("sample_type", "n1", "n2", "n0"), sep="_", remove = F) |> 
+  group_by(cell_line, cell_line_bulk,seq_method, sample_type) |> 
+  summarise(KL_divergence=sum(p.log.p_over_q)) |> 
+  ggplot(aes(cell_line_bulk,cell_line, fill = KL_divergence)) + 
+  geom_tile()+
+  scale_fill_viridis_b(direction = -1)+
+  geom_text(aes(label=round(KL_divergence,2)))+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  facet_wrap(seq_method~sample_type)+
+
+  ggtitle("KL bulk predicting sc proportions, 5 clusters")
+
+
+
+ggsave(paste0(path_output_file, "/fraction_corr_plot_KL bulk predicting sc proportions 5 clusters.png")) 
+```
+```{r}
+proportions_cell_states |>
+  pivot_longer(starts_with("GEX"),
+               names_to = "sample" ,
+               values_to = "fraction") |> 
+  left_join(select(hub_01_meta_data, cell_line,processing, sample)) |> 
+  left_join(rename(sc_counts_harmony_clusters_res0.1,cell_line_bulk="cell_line"))|>
+  mutate(p.log.p_over_q=fraction*log2(fraction/fraction_bulk)) |>
+  
+  
+  separate(sample, into = c("n0", "n1", "seq_method" ), sep="_") |> 
+  separate(processing, into = c("sample_type", "n1", "n2", "n0"), sep="_", remove = F) |> 
+  group_by(cell_line, cell_line_bulk,seq_method, sample_type) |> 
+  summarise(KL_divergence=sum(p.log.p_over_q)) |> 
+  ggplot(aes(cell_line_bulk,cell_line, fill = KL_divergence)) + 
+  geom_tile()+
+  scale_fill_viridis_b(direction = -1)+
+  geom_text(aes(label=round(KL_divergence,2)))+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  facet_wrap(seq_method~sample_type)+
+
+  ggtitle("KL sc predicting bulk proportions, 10 clusters")
+
+
+
+ggsave(paste0(path_output_file, "/fraction_corr_plot_KL sc predicting bulk proportions 10 clusters.png")) 
+```
+
+```{r}
+proportions_cell_types |>
+  pivot_longer(starts_with("GEX"),
+               names_to = "sample" ,
+               values_to = "fraction") |> 
+  left_join(hub_01_meta_data) |> 
+  ggplot(aes(sample,fraction, fill = cluster))+
+  geom_col()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  facet_grid(~cell_line,scales = "free_x", space = "free_x")
+  
+ggsave(paste0(path_output_file, "/BayesPrismProportions_cell_types.png")) 
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

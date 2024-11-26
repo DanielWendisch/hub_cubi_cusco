@@ -1,0 +1,661 @@
+---
+title: "deconvolution"
+format: html
+editor: visual
+---
+
+```{r}
+library(Seurat)
+library(tidyverse)
+library(tidyseurat)
+library(BayesPrism)
+library(readxl)
+library(janitor)
+library(patchwork)
+#library(biomaRt) gives problems with "select"
+library(InstaPrism)
+library(MuSiC)
+library(TOAST)
+library(SummarizedExperiment)
+library(SingleCellExperiment)
+library(tidySingleCellExperiment)
+library(here)
+```
+
+```{r}
+dataset_name <- "hub_01"
+path_raw_data_file <-  here("..\\..\\raw_data\\cubi_cusco")
+
+
+obj <- read_rds(paste0("../","intermediate_data/", dataset_name, "_integrated_", ".rds"))
+
+combined_bulk<- read.csv(paste(path_raw_data_file,"hub_01_02_bulk/counts_table_hub_01_02.csv", sep = "/"))
+hub_01_meta_data <-  read_csv( "../intermediate_data/hub_01_meta_data.csv")
+
+  
+
+```
+
+## select matching bulk samples according to sodar meta data
+
+```{r}
+hub_01_bulk_library_names <- hub_01_meta_data |> pull(sample)
+hub_01_bulk_library_names <- hub_01_bulk_library_names |> str_replace_all("-",".")
+
+combined_bulk <- combined_bulk |>  select(-gene,-X)
+bk.dat <- combined_bulk[,hub_01_bulk_library_names] |> as.matrix() |>  t()
+colnames(bk.dat) <- combined_bulk |> pull(ensembl_gene_id)
+bk.dat[1:8,1:5]
+
+```
+
+## chose cell state labels, remove clusters
+
+```{r}
+
+
+cell.state.labels <- obj |> pull(harmony_clusters_res0.4) |> as.character()
+table(cell.state.labels)
+
+
+```
+
+## make single cell mtx with ensemble ids from seurat object
+
+```{r}
+sc.dat_uncorrected <- obj@assays$uncorrected_RNA@layers$counts |> as.matrix() 
+
+# Define your list of gene names
+gene_names <- rownames(obj)
+
+# Use the Ensembl database for humans (change the dataset for different species)
+ensembl <- biomaRt::useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+
+# Query Ensembl to get the Ensembl Gene IDs for your list of gene names
+gene_mapping <- biomaRt::getBM(
+  filters = "hgnc_symbol",    # Filter based on HGNC gene symbols
+  attributes = c("hgnc_symbol", "ensembl_gene_id"),  # Retrieve HGNC symbols and Ensembl Gene IDs
+  values = gene_names,        # The list of gene names to map
+  mart = ensembl
+)
+
+# make named vactor for conversion
+gene_vec <- gene_mapping$ensembl_gene_id
+names(gene_vec)<- gene_mapping$hgnc_symbol
+#sort gene names and ensmbl ids and by that the sc matx to allow conversion of mix of genenames and ensemble ids
+ensgs <- gene_names[grepl("ENSG", gene_names)]
+hpc<- gene_names[!grepl("ENSG", gene_names)]
+colnames(sc.dat_uncorrected) <- colnames(obj)#cells
+rownames(sc.dat_uncorrected) <- rownames(obj)#features
+sc.dat_uncorrected <- sc.dat_uncorrected[c(ensgs,hpc),]#rearrange sc.dat_uncorrected
+
+#convert gene names
+hpc_to_ensgs <- gene_vec[hpc]
+rownames(sc.dat_uncorrected) <- c(ensgs, hpc_to_ensgs)
+
+sc.dat_uncorrected <- t(sc.dat_uncorrected)
+
+sc.dat_background_corrected <- obj@assays$uncorrected_RNA@layers$counts |> as.matrix() 
+
+# Define your list of gene names
+gene_names <- rownames(obj)
+
+# Use the Ensembl database for humans (change the dataset for different species)
+ensembl <- biomaRt::useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+
+# Query Ensembl to get the Ensembl Gene IDs for your list of gene names
+gene_mapping <- biomaRt::getBM(
+  filters = "hgnc_symbol",    # Filter based on HGNC gene symbols
+  attributes = c("hgnc_symbol", "ensembl_gene_id"),  # Retrieve HGNC symbols and Ensembl Gene IDs
+  values = gene_names,        # The list of gene names to map
+  mart = ensembl
+)
+
+# make named vactor for conversion
+gene_vec <- gene_mapping$ensembl_gene_id
+names(gene_vec)<- gene_mapping$hgnc_symbol
+#sort gene names and ensmbl ids and by that the sc matx to allow conversion of mix of genenames and ensemble ids
+ensgs <- gene_names[grepl("ENSG", gene_names)]
+hpc<- gene_names[!grepl("ENSG", gene_names)]
+colnames(sc.dat_background_corrected) <- colnames(obj)#cells
+rownames(sc.dat_background_corrected) <- rownames(obj)#features
+sc.dat_background_corrected <- sc.dat_background_corrected[c(ensgs,hpc),]#rearrange sc.dat_background_corrected
+
+#convert gene names
+hpc_to_ensgs <- gene_vec[hpc]
+rownames(sc.dat_background_corrected) <- c(ensgs, hpc_to_ensgs)
+
+sc.dat_background_corrected <- t(sc.dat_background_corrected)
+
+```
+
+```{r}
+#bk.dat[1:10,1:10]
+bk.dat_s <- bk.dat
+bk.dat <- bk.dat[,colSums(bk.dat)>20]# doesnt change proportions
+genes_keep_2 <- intersect(colnames(sc.dat_uncorrected),colnames(bk.dat))
+
+bk.dat <- bk.dat[,genes_keep_2]
+sc.dat_uncorrected <- sc.dat_uncorrected[,genes_keep_2]
+
+```
+
+```{r}
+
+meta_data_arranged <- obj@meta.data[rownames(sc.dat_uncorrected),]
+meta_data_arranged <- meta_data_arranged |> bind_cols(obj@reductions$umap.mnn@cell.embeddings[rownames(sc.dat_uncorrected),]) 
+
+sce<- SingleCellExperiment(assays = list(counts = t(sc.dat_uncorrected)), colData=meta_data_arranged)
+
+obj <- FindVariableFeatures(obj)
+
+sce <- sce |> mutate(m_e_class =case_when(
+  harmony_clusters_res0.1 == 1 ~ "M",
+  harmony_clusters_res0.1 == 2 ~ "M",
+  harmony_clusters_res0.1 == 3 ~ "M",
+  harmony_clusters_res0.1 == 4 ~ "M",
+  harmony_clusters_res0.1 == 0 ~ "E"
+  
+))
+
+sce <- sce |> mutate(m_e =case_when(
+  cluster %in% c(0)  ~ "M",
+  cluster %in% c(1) ~ "E",
+
+  
+))
+
+sce |>
+  ggplot(aes(umapmnn_1,
+             umapmnn_2,
+             color=harmony_clusters_res0.4))+
+  geom_point()+
+  theme_void()+
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+```{r}
+sc_group_counts <- sce |> group_by(cell_line_cellranger, m_e_class) |> summarise(n=n())|> mutate(fraction=n/sum(n))
+
+sc_m_e_bar_chart <-  sce |> group_by(cell_line_cellranger, m_e_class) |> summarise(n=n())|> mutate(fraction=n/sum(n)) |>
+  ggplot(aes(cell_line_cellranger,fraction, fill = m_e_class)) +
+  geom_col() +
+  ggtitle("single cell proportions")
+
+sc_cluster_chart <-  sce |> group_by(cell_line_cellranger, harmony_clusters_res0.4) |> summarise(n=n())|> mutate(fraction=n/sum(n)) |>
+  ggplot(aes(cell_line_cellranger,fraction, fill = harmony_clusters_res0.4)) +
+  geom_col() +
+  ggtitle("single cell proportions")
+
+sc_m_e_bar_chart/sc_cluster_chart
+ggsave("output/hub_01_MuSiC_sc_m_e_bar_chart.clusters.png")
+```
+
+# music unfiltered
+
+```{r}
+Est.prop_unfiltered = music_prop(bulk.mtx = t(bk.dat),
+                               sc.sce = sce,
+                               clusters = 'm_e_class',
+                               samples = 'cell_line_cellranger',
+                               verbose = F)
+
+
+
+p_m_e_unfiltered <- Est.prop_unfiltered$Est.prop.weighted |> as_tibble(rownames="sample") |> 
+  left_join(hub_01_meta_data |> mutate(sample=str_replace_all(sample, "-", "."))) |> 
+  pivot_longer(cols = M:E, names_to = "m_e_class" , values_to = "fraction") |>
+    mutate(name=paste0("hIO_",cell_line)) |> 
+  separate(name_2, into = "prep", remove = F) |> 
+  mutate(prep_sample=paste0(sample, "_", prep)) |> 
+   ggplot(aes(prep_sample,fraction, fill = m_e_class)) +  
+  geom_col() +
+  ggtitle("MuSiC")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+    facet_grid(~name,scales = "free_x", space = "free_x")
+
+sc_m_e_bar_chart/p_m_e_unfiltered
+ggsave("output/hub_01_MuSiC_sc_m_e_bar_chart_unflitered.png")
+
+```
+
+```{r}
+Est.prop.2_unfiltered = music_prop(bulk.mtx = t(bk.dat),
+                               sc.sce = sce,
+                               clusters = 'harmony_clusters_res0.4',
+                               samples = 'cell_line_cellranger',
+                               verbose = F)
+
+
+p_clusters_unfiltered <- Est.prop.2_unfiltered$Est.prop.allgene |>
+  as_tibble(rownames="sample") |>
+  left_join(hub_01_meta_data |> mutate(sample=str_replace_all(sample, "-", "."))) |> 
+  mutate(name=paste0("hIO_",cell_line)) |> 
+  pivot_longer(cols = "7":"8", names_to = "cluster" , values_to = "fraction") |>
+    separate(name_2, into = "prep", remove = F) |> 
+  mutate(prep_sample=paste0(sample, "_", prep)) |> 
+   ggplot(aes(prep_sample,fraction, fill = cluster)) +  
+  geom_col() +
+  ggtitle("MuSiC")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+    facet_grid(~name,scales = "free_x", space = "free_x")
+
+sc_cluster_chart/p_clusters_unfiltered
+ggsave("output/hub_01_MuSiC_clusters_bar_chart_unflitered.png")
+```
+
+```{r}
+sce_no10 <- sce |> filter(!harmony_clusters_res0.4%in%c("10"))
+
+```
+
+# music unfiltered
+
+```{r}
+Est.prop_filtered_10= music_prop(bulk.mtx = t(bk.dat),
+                               sc.sce = sce_no10,
+                               clusters = 'm_e_class',
+                               samples = 'cell_line_cellranger',
+                               verbose = F)
+
+
+
+p_m_e_filtered_10<- Est.prop_filtered_10$Est.prop.weighted |> as_tibble(rownames="sample") |> 
+  left_join(hub_01_meta_data |> mutate(sample=str_replace_all(sample, "-", "."))) |> 
+  pivot_longer(cols = M:E, names_to = "m_e_class" , values_to = "fraction") |>
+    mutate(name=paste0("hIO_",cell_line)) |> 
+  separate(name_2, into = "prep", remove = F) |> 
+  mutate(prep_sample=paste0(sample, "_", prep)) |> 
+   ggplot(aes(prep_sample,fraction, fill = m_e_class)) +  
+  geom_col() +
+  ggtitle("MuSiC")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+    facet_grid(~name,scales = "free_x", space = "free_x")
+
+sc_m_e_bar_chart/p_m_e_filtered_10
+ggsave("output/hub_01_MuSiC_sc_m_e_bar_chart_not10.png")
+
+```
+
+```{r}
+Est.prop.2_filtered_10 = music_prop(bulk.mtx = t(bk.dat),
+                               sc.sce = sce_no10,
+                               clusters = 'harmony_clusters_res0.4',
+                               samples = 'cell_line_cellranger',
+                               verbose = F)
+
+
+p_clusters_filtered_10 <- Est.prop.2_filtered_10$Est.prop.allgene |>
+  as_tibble(rownames="sample") |>
+  left_join(hub_01_meta_data |> mutate(sample=str_replace_all(sample, "-", "."))) |> 
+  mutate(name=paste0("hIO_",cell_line)) |> 
+  pivot_longer(cols = "7":"8", names_to = "cluster" , values_to = "fraction") |>
+    separate(name_2, into = "prep", remove = F) |> 
+  mutate(prep_sample=paste0(sample, "_", prep)) |> 
+   ggplot(aes(prep_sample,fraction, fill = cluster)) +  
+  geom_col() +
+  ggtitle("MuSiC")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+    facet_grid(~name,scales = "free_x", space = "free_x")
+
+sc_cluster_chart/p_clusters_filtered_10
+ggsave("output/hub_01_MuSiC_clusters_bar_chart_not10.png")
+```
+
+```{r}
+sce_no10.9 <- sce |> filter(!harmony_clusters_res0.4%in%c("10", "9"))
+
+```
+
+```{r}
+Est.prop_filtered_10_9= music_prop(bulk.mtx = t(bk.dat),
+                               sc.sce = sce_no10.9,
+                               clusters = 'm_e_class',
+                               samples = 'cell_line_cellranger',
+                               verbose = F)
+
+
+
+p_m_e_filtered_10_9<- Est.prop_filtered_10_9$Est.prop.weighted |> as_tibble(rownames="sample") |> 
+  left_join(hub_01_meta_data |> mutate(sample=str_replace_all(sample, "-", "."))) |> 
+  pivot_longer(cols = M:E, names_to = "m_e_class" , values_to = "fraction") |>
+    mutate(name=paste0("hIO_",cell_line)) |> 
+  separate(name_2, into = "prep", remove = F) |> 
+  mutate(prep_sample=paste0(sample, "_", prep)) |> 
+   ggplot(aes(prep_sample,fraction, fill = m_e_class)) +  
+  geom_col() +
+  ggtitle("MuSiC")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+    facet_grid(~name,scales = "free_x", space = "free_x")
+
+sc_m_e_bar_chart/p_m_e_filtered_10_9
+ggsave("output/hub_01_MuSiC_clusters_bar_chart_not10.9.png")
+
+```
+
+```{r}
+Est.prop.2_filtered_10_9 = music_prop(bulk.mtx = t(bk.dat),
+                               sc.sce = sce_no10.9,
+                               clusters = 'harmony_clusters_res0.4',
+                               samples = 'cell_line_cellranger',
+                               verbose = F)
+
+cluster <- sce$harmony_clusters_res0.4 |> unique()
+
+p_clusters_filtered_10_9 <- Est.prop.2_filtered_10_9$Est.prop.allgene |>
+  as_tibble(rownames="sample") |>
+  left_join(hub_01_meta_data |> mutate(sample=str_replace_all(sample, "-", "."))) |> 
+  mutate(name=paste0("hIO_",cell_line)) |> 
+  pivot_longer(cols = any_of(cluster), names_to = "cluster" , values_to = "fraction") |>
+    separate(name_2, into = "prep", remove = F) |> 
+  mutate(prep_sample=paste0(sample, "_", prep)) |> 
+   ggplot(aes(prep_sample,fraction, fill = cluster)) +  
+  geom_col() +
+  ggtitle("MuSiC")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+    facet_grid(~name,scales = "free_x", space = "free_x")
+
+sc_cluster_chart/p_clusters_filtered_10_9
+ggsave("output/hub_01_MuSiC_sc_m_e_bar_chart_not10.9.png")
+
+```
+
+```{r}
+sce_no10.9.4 <- sce |> filter(!harmony_clusters_res0.4%in%c("10", "9", "4"))
+
+```
+
+```{r}
+Est.prop_filtered_10_9_4= music_prop(bulk.mtx = t(bk.dat),
+                               sc.sce = sce_no10.9.4,
+                               clusters = 'm_e_class',
+                               samples = 'cell_line_cellranger',
+                               verbose = F)
+
+
+
+p_m_e_filtered_10_9_4<- Est.prop_filtered_10_9_4$Est.prop.weighted |> as_tibble(rownames="sample") |> 
+  left_join(hub_01_meta_data |> mutate(sample=str_replace_all(sample, "-", "."))) |> 
+  pivot_longer(cols = M:E, names_to = "m_e_class" , values_to = "fraction") |>
+    mutate(name=paste0("hIO_",cell_line)) |> 
+  separate(name_2, into = "prep", remove = F) |> 
+  mutate(prep_sample=paste0(sample, "_", prep)) |> 
+   ggplot(aes(prep_sample,fraction, fill = m_e_class)) +  
+  geom_col() +
+  ggtitle("MuSiC")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+    facet_grid(~name,scales = "free_x", space = "free_x")
+
+sc_m_e_bar_chart/p_m_e_filtered_10_9_4
+
+```
+
+```{r}
+Est.prop.2_filtered_10_9_4_7 = music_prop(bulk.mtx = t(bk.dat),
+                               sc.sce = sce_no10.9.4,
+                               clusters = 'harmony_clusters_res0.4',
+                               samples = 'cell_line_cellranger',
+                               verbose = F)
+
+cluster <- sce$harmony_clusters_res0.4 |> unique()
+
+p_clusters_filtered_10_9_4_7 <- Est.prop.2_filtered_10_9_4_7$Est.prop.allgene |>
+  as_tibble(rownames="sample") |> 
+  left_join(hub_01_meta_data |> mutate(sample=str_replace_all(sample, "-", "."))) |> 
+  mutate(name=paste0("hIO_",cell_line)) |> 
+  pivot_longer(cols = any_of(cluster) , names_to = "cluster" , values_to = "fraction") |>
+    separate(name_2, into = "prep", remove = F) |> 
+  mutate(prep_sample=paste0(sample, "_", prep)) |> 
+   ggplot(aes(prep_sample,fraction, fill = cluster)) +  
+  geom_col() +
+  ggtitle("MuSiC")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+    facet_grid(~name,scales = "free_x", space = "free_x")
+
+sc_cluster_chart/p_clusters_filtered_10_9_4_7
+
+```
+
+```{r}
+sce_no10.9.4.7 <- sce |> filter(!harmony_clusters_res0.4%in%c("10", "9", "4", "7"))
+
+```
+
+```{r}
+Est.prop_filtered_10_9_4_7= music_prop(bulk.mtx = t(bk.dat),
+                               sc.sce = sce_no10.9.4.7,
+                               clusters = 'm_e_class',
+                               samples = 'cell_line_cellranger',
+                               verbose = F)
+
+
+
+p_m_e_filtered_10_9_4_7<- Est.prop_filtered_10_9_4_7$Est.prop.weighted |> as_tibble(rownames="sample") |> 
+  left_join(hub_01_meta_data |> mutate(sample=str_replace_all(sample, "-", "."))) |> 
+  pivot_longer(cols = M:E, names_to = "m_e_class" , values_to = "fraction") |>
+    mutate(name=paste0("hIO_",cell_line)) |> 
+  separate(name_2, into = "prep", remove = F) |> 
+  mutate(prep_sample=paste0(sample, "_", prep)) |> 
+   ggplot(aes(prep_sample,fraction, fill = m_e_class)) +  
+  geom_col() +
+  ggtitle("MuSiC")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+    facet_grid(~name,scales = "free_x", space = "free_x")
+
+sc_m_e_bar_chart/p_m_e_filtered_10_9_4_7
+
+```
+
+```{r}
+Est.prop.2_filtered_10_9_4_7 = music_prop(bulk.mtx = t(bk.dat),
+                               sc.sce = sce_no10.9.4.7,
+                               clusters = 'harmony_clusters_res0.4',
+                               samples = 'cell_line_cellranger',
+                               verbose = F)
+
+
+p_clusters_filtered_10_9_4_7 <- Est.prop.2_filtered_10_9_4_7$Est.prop.allgene |>
+  as_tibble(rownames="sample") |>
+  left_join(hub_01_meta_data |> mutate(sample=str_replace_all(sample, "-", "."))) |> 
+  mutate(name=paste0("hIO_",cell_line)) |> 
+  pivot_longer(cols = "2":"8", names_to = "cluster" , values_to = "fraction") |>
+    separate(name_2, into = "prep", remove = F) |> 
+  mutate(prep_sample=paste0(sample, "_", prep)) |> 
+   ggplot(aes(prep_sample,fraction, fill = cluster)) +  
+  geom_col() +
+  ggtitle("MuSiC")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+    facet_grid(~name,scales = "free_x", space = "free_x")
+
+sc_cluster_chart/p_clusters_filtered_10_9_4_7
+
+```
+
+```{r}
+
+meta_data_arranged <- obj@meta.data[rownames(sc.dat_background_corrected),]
+meta_data_arranged <- meta_data_arranged |> bind_cols(obj@reductions$umap.mnn@cell.embeddings[rownames(sc.dat_background_corrected),])
+
+sce<- SingleCellExperiment(assays = list(counts = t(sc.dat_background_corrected)), colData=meta_data_arranged)
+
+
+
+sce <- sce |> mutate(m_e_class =case_when(
+  harmony_clusters_res0.1 == 1 ~ "M",
+  harmony_clusters_res0.1 == 2 ~ "M",
+  harmony_clusters_res0.1 == 3 ~ "M",
+  harmony_clusters_res0.1 == 4 ~ "M",
+  harmony_clusters_res0.1 == 0 ~ "E"
+  
+))
+
+sce |> ggplot(aes(umapmnn_1, umapmnn_2, color=harmony_clusters_res0.4))+geom_point()+theme_void()
+```
+
+```{r}
+Est.prop_uncorrected= music_prop(bulk.mtx = t(bk.dat),
+                               sc.sce = sce,
+                               clusters = 'm_e_class',
+                               samples = 'cell_line_cellranger',
+                               verbose = F)
+
+
+
+sc_m_e_bar_chart_prop_uncorrected <- Est.prop_uncorrected$Est.prop.weighted |> as_tibble(rownames="sample") |> 
+  left_join(hub_01_meta_data |> mutate(sample=str_replace_all(sample, "-", "."))) |> 
+  pivot_longer(cols = M:E, names_to = "m_e_class" , values_to = "fraction") |>
+    mutate(name=paste0("hIO_",cell_line)) |> 
+  separate(name_2, into = "prep", remove = F) |> 
+  mutate(prep_sample=paste0(sample, "_", prep)) |> 
+   ggplot(aes(prep_sample,fraction, fill = m_e_class)) +  
+  geom_col() +
+  ggtitle("MuSiC")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+    facet_grid(~name,scales = "free_x", space = "free_x")
+
+sc_m_e_bar_chart/p_m_e_unfiltered
+
+```
+
+########################## 
+
+```{r}
+sc.dat.filtered.pc.sig <- read_rds("intermediate_data/BayesPrsim_hub_01_sc.dat.filtered.pc.sig.rds")
+bayesPrism_genes <- sc.dat.filtered.pc.sig |> colnames()
+```
+
+# Variable Features
+
+```{r}
+meta_data_arranged <- obj@meta.data[rownames(sc.dat_uncorrected),]
+meta_data_arranged <- meta_data_arranged |> bind_cols(obj@reductions$umap.mnn@cell.embeddings[rownames(sc.dat_uncorrected),]) 
+
+var_ensgs <- gene_vec[VariableFeatures(obj)]
+
+
+variable_counts_ensg_mtx <- sc.dat_uncorrected[,intersect(var_ensgs,colnames(sc.dat_uncorrected))]
+
+sce_var_features<- SingleCellExperiment(assays = list(counts = t(variable_counts_ensg_mtx) ), colData=meta_data_arranged)
+
+sce_var_features <- sce_var_features |> mutate(m_e_class =case_when(
+  harmony_clusters_res0.1 == 1 ~ "M",
+  harmony_clusters_res0.1 == 2 ~ "M",
+  harmony_clusters_res0.1 == 3 ~ "M",
+  harmony_clusters_res0.1 == 4 ~ "M",
+  harmony_clusters_res0.1 == 0 ~ "E"
+  
+))
+```
+
+```{r}
+bulk_ensg_as_row <-  t(bk.dat)
+bulk.mtx_var_genes <-bulk_ensg_as_row[intersect(rownames(sce_var_features),rownames(bulk_ensg_as_row)),]
+Est.prop_var <- music_prop(bulk.mtx = bulk.mtx_var_genes,
+                               sc.sce = sce_var_features,
+                               clusters = 'm_e_class',
+                               samples = 'cell_line_cellranger',
+                               verbose = F)
+
+
+
+sc_m_e_bar_chart_prop_variable_genes<- Est.prop_var$Est.prop.weighted |> as_tibble(rownames="sample") |> 
+  left_join(hub_01_meta_data |> mutate(sample=str_replace_all(sample, "-", "."))) |> 
+  pivot_longer(cols = M:E, names_to = "m_e_class" , values_to = "fraction") |>
+    mutate(name=paste0("hIO_",cell_line)) |> 
+  separate(name_2, into = "prep", remove = F) |> 
+  mutate(prep_sample=paste0(sample, "_", prep)) |> 
+   ggplot(aes(prep_sample,fraction, fill = m_e_class)) +  
+  geom_col() +
+  ggtitle("MuSiC")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+    facet_grid(~name,scales = "free_x", space = "free_x")
+
+sc_m_e_bar_chart/sc_m_e_bar_chart_prop_variable_genes
+```
+
+```{r}
+
+Est.prop_var_cluster <-  music_prop(bulk.mtx = bulk.mtx_var_genes,
+                               sc.sce = sce_var_features,
+                               clusters = 'harmony_clusters_res0.4',
+                               samples = 'cell_line_cellranger',
+                               verbose = F)
+
+
+clusters_Est.prop_var_cluster <- Est.prop_var_cluster$Est.prop.allgene |>
+  as_tibble(rownames="sample") |>
+  left_join(hub_01_meta_data |> mutate(sample=str_replace_all(sample, "-", "."))) |> 
+  mutate(name=paste0("hIO_",cell_line)) |> 
+  pivot_longer(cols = "7":"8", names_to = "cluster" , values_to = "fraction") |>
+    separate(name_2, into = "prep", remove = F) |> 
+  mutate(prep_sample=paste0(sample, "_", prep))
+  
+p <- clusters_Est.prop_var_cluster |> ggplot(aes(prep_sample,fraction, fill = cluster)) +  
+  geom_col() +
+  ggtitle("MuSiC")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+    facet_grid(~name,scales = "free_x", space = "free_x")
+
+sc_cluster_chart/p
+
+```
+
+```{r}
+clusters_Est.prop_var_cluster |> 
+  mutate(cluster =case_when(
+  cluster == 1 ~ "M",
+  cluster == 2 ~ "M",
+  cluster == 3 ~ "M",
+  cluster == 4 ~ "M",
+  cluster == 0 ~ "E")) |>
+  ggplot(aes(prep_sample,fraction, fill = cluster)) +  
+  geom_col() +
+  ggtitle("MuSiC")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    facet_grid(~name,scales = "free_x", space = "free_x")
+
+```
+
+```{r}
+obj <- obj |> mutate(m_e_class =case_when(
+  harmony_clusters_res0.1 == 1 ~ "M",
+  harmony_clusters_res0.1 == 2 ~ "M",
+  harmony_clusters_res0.1 == 3 ~ "M",
+  harmony_clusters_res0.1 == 4 ~ "M",
+  harmony_clusters_res0.1 == 0 ~ "E"
+  
+)) |> filter(harmony_clusters_res0.4!="10")
+
+Idents(obj) <- "m_e_class"
+
+m_e_markers <- FindAllMarkers(obj,min.diff.pct = 0.5, only.pos = T, assay = "RNA")
+m_e_markers <- m_e_markers |> mutate(pct_diff=pct.1-pct.2)
+m_e_markers |> group_by(cluster) |>  slice_max(pct_diff, n=10)|>  arrange(desc(pct_diff))
+```
+
+```{r}
+Idents(obj) <- "m_e_class"
+obj@assays
+
+m_e_markers_mnn.reconstructed <- FindAllMarkers(obj,min.diff.pct = 0.5, only.pos = T, assay = "mnn.reconstructed")
+m_e_markers_mnn.reconstructed <- m_e_markers_mnn.reconstructed |> mutate(pct_diff=pct.1-pct.2)
+m_e_markers_mnn.reconstructed |> group_by(cluster) |>  slice_max(pct_diff, n=10)|>  arrange(desc(pct_diff))
+```
+
+```{r}
+Idents(obj) <- "m_e_class"
+obj@assays
+
+m_e_markers_uncorrected_RNA <- FindAllMarkers(obj,min.diff.pct = 0.5, only.pos = T, assay = "uncorrected_RNA")
+m_e_markers_uncorrected_RNA <- m_e_markers_uncorrected_RNA |> mutate(pct_diff=pct.1-pct.2)
+m_e_markers_uncorrected_RNA |> arrange(desc(pct_diff))
+```
+
+```{r}
+sce |> join_features("NR2F1")
+
+tibble(obj@assays$RNA@layers$counts["NR2F1",])
+rownames(obj)
+
+sce_var_features |> join_features("NR2F1")
+```

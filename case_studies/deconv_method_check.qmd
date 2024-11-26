@@ -1,0 +1,814 @@
+---
+title: "deconvolution"
+format: html
+editor: visual
+---
+
+```{r}
+library(Seurat)
+library(tidyverse)
+library(tidyseurat)
+#library(BayesPrism)
+library(readxl)
+library(janitor)
+library(patchwork)
+library(DESeq2)
+library(ggpmisc)
+library(here)
+
+#library(biomaRt) gives problems with "select"
+#library(InstaPrism)
+#library(MuSiC)
+#library(TOAST)
+#library(SummarizedExperiment)
+#library(SingleCellExperiment)
+#library(tidySingleCellExperiment)
+```
+
+```{r}
+ggsave_png_and_eps <- function(output_path,plotname){
+  ggsave(paste0(output_path,"/", plot_name, ".png"))
+  ggsave(paste0(output_path, "/", plot_name, ".eps"))
+}
+```
+
+```{r}
+dataset_name <- "hub_01"
+path_raw_data_file <-  here("../../raw_data/cubi_cusco")
+
+output_path <- here("output/deconv_method_check/")
+obj <- read_rds(here(paste0("intermediate_data/", dataset_name, "_integrated_", ".rds")))
+combined_bulk<- read.csv(paste(path_raw_data_file,"hub_01_02_bulk\\counts_table_hub_01_02.csv", sep = "/"))
+hub_01_meta_data <-  read_csv( here("intermediate_data/hub_01_meta_data.csv"))
+gene_lengths_tbl <- read.csv(paste(path_raw_data_file,"hub_01_02_bulk/gene_lengths.csv", sep = "/")) |> # pulled from alignment output in scripts "bulk_check"
+  as_tibble()
+#obj
+```
+
+```{r}
+#aggregate counts of each cell line in single cell object
+summed_sc_reads_cell_line <- AggregateExpression(object = obj,
+                                                 assays = "uncorrected_RNA",
+                                                 group.by = "cell_line_cellranger")
+
+summed_sc_reads_cell_line <- summed_sc_reads_cell_line[[1]] |>
+  as_tibble(rownames="gene")
+
+#combine single cell and bulk data and only keep non-ENSG genes
+count_tbl <- summed_sc_reads_cell_line |>
+  filter(!grepl("ENSG", gene)) |> 
+  inner_join(combined_bulk) |> 
+  select(-X,-ensembl_gene_id)
+
+hub_01_meta_data <- hub_01_meta_data |>
+  mutate(sample=str_replace_all(sample,
+                                pattern = "-",
+                                replacement = ".")) |> 
+  separate(sample, into = c("B","num","sequencing_type"), sep = "_", remove = F) |> 
+  separate(name_2, into = c("processing"))
+
+sc_meta_data <- tibble(sample=colnames(summed_sc_reads_cell_line |> select(-gene)),
+       sequencing_type="single-cell") |>
+  separate(sample, into = c("tissue_type", "cell_line","appendix"), remove = F) |> 
+  mutate(cell_line=paste0(cell_line,"-",appendix)) |> 
+  select(-appendix)
+
+
+meta_data <- hub_01_meta_data |>
+  bind_rows(sc_meta_data) |> 
+  select(sample, sequencing_type, cell_line,tissue_type,processing) |> 
+  mutate(processing=case_when(processing== "10X" ~ "digested_bulk",
+                              processing== "Pool" ~ "undigested_bulk",
+                              is.na(processing) ~ "digested_sc"
+                              ))
+
+```
+
+```{r}
+count_mtx <- count_tbl |> select(all_of(pull(meta_data, sample))) |> as.matrix()
+
+rownames(count_mtx) <- pull(count_tbl,gene)
+
+
+dds <- DESeqDataSetFromMatrix(
+    countData = count_mtx,
+    colData = meta_data,
+    design = ~ cell_line + sequencing_type 
+)
+dds <- dds[rowSums(counts(dds)) > 10, ]
+dds <- DESeq(dds)
+results_table <- results(dds )
+summary(results_table)
+resultsNames(dds)
+rld <- rlog(dds)
+```
+
+```{r}
+plot_title <- "PCA bulk and single-cell by cell line"
+plot_subtitle <- dataset_name
+plot_caption <- "rlog from DESeq2"
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+plotPCA(rld, intgroup = "cell_line") + 
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption)+ theme_bw()
+
+ggsave_png_and_eps(output_path,plot_name)
+ggsave(paste0(output_path,plot_name, ".svg"))
+
+```
+
+```{r}
+plot_title <- "PCA bulk and single-cell by sequencing type"
+plot_subtitle <- dataset_name
+plot_caption <- "rlog from DESeq2, scSeq counts are sums of cell counts"
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+plotPCA(rld, intgroup = "sequencing_type") + 
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption) + theme_bw()
+
+ggsave_png_and_eps(output_path,plot_name)
+ggsave(paste0(output_path,plot_name, ".png"))
+
+```
+
+PCA of bulk and pseudo-bulk (by summation) proves largest variablity of data set to be associated with sequncing method. Of note: bulk-3pseq is not more similar to scSEq than polyA, despite 10X sequencing using 3p-seq as well.
+
+```{r}
+plot_title <- "PCA 2 and 3 bulk and single-cell by cell line"
+plot_subtitle <- dataset_name
+plot_caption <- "rlog from DESeq2"
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+plotPCA(rld, intgroup = "cell_line", pcsToUse = 2:3 ) + 
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption)+ theme_bw()
+
+ggsave_png_and_eps(output_path,plot_name)
+ggsave(paste0(output_path,plot_name, ".svg"))
+
+```
+
+```{r}
+plot_title <- "PCA 2 and 3 bulk and single-cell by sequencing type"
+plot_subtitle <- dataset_name
+plot_caption <- "rlog from DESeq2, scSeq counts are sums of cell counts"
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+plotPCA(rld, intgroup = "sequencing_type", pcsToUse = 2:3 ) + 
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption) + theme_bw()
+
+ggsave_png_and_eps(output_path,plot_name)
+ggsave(paste0(output_path,plot_name, ".png"))
+
+```
+
+```{r}
+plot_title <- "PCA 3 and 4 bulk and single-cell by sequencing type"
+plot_subtitle <- dataset_name
+plot_caption <- "rlog from DESeq2, scSeq counts are sums of cell counts"
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+plotPCA(rld, intgroup = "sequencing_type", pcsToUse = 3:4 ) + 
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption) + theme_bw()
+
+ggsave_png_and_eps(output_path,plot_name)
+ggsave(paste0(output_path,plot_name, ".png"))
+
+```
+
+```{r}
+plot_title <- "PCA 3 and 4 bulk and single-cell by cell line"
+plot_subtitle <- dataset_name
+plot_caption <- "rlog from DESeq2"
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+plotPCA(rld, intgroup = "cell_line", pcsToUse = 3:4 ) + 
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption)+ theme_bw()
+
+ggsave_png_and_eps(output_path,plot_name)
+ggsave(paste0(output_path,plot_name, ".svg"))
+
+```
+
+While PC 1 & 2 explains most variability amongst seq methods, PC 3&4 separate cell lines.
+
+```{r}
+plot_title <- "PCA 4 and 5 bulk and single-cell by cell line"
+plot_subtitle <- dataset_name
+plot_caption <- "rlog from DESeq2"
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+plotPCA(rld, intgroup = "cell_line", pcsToUse = 4:5 ) + 
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption)+ theme_bw()
+
+ggsave_png_and_eps(output_path,plot_name)
+ggsave(paste0(output_path,plot_name, ".svg"))
+
+```
+
+```{r}
+plot_title <- "PCA 4 and 5 bulk and single-cell by processing"
+plot_subtitle <- dataset_name
+plot_caption <- "rlog from DESeq2"
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+plotPCA(rld, intgroup = "processing", pcsToUse = 4:5 ) + 
+  labs(title =  plot_title, subtitle =  plot_subtitle, caption =  plot_caption)+ theme_bw()
+
+ggsave_png_and_eps(output_path,plot_name)
+ggsave(paste0(output_path,plot_name, ".svg"))
+
+```
+
+## Stochastic differences in library compositions
+
+RNA molecule capture in 10X sequencing is supposed to be worse in scRNA-Seq compared to bulk (in a single cell some molecules don't bind the bead and will not be amplified). Therefore measurement discreprencies are expeted to be influenced by molecules abundance. The 10X-3' as well as thwe bulk 3' libraries introduce are biased towards smaller transcripts in copmarison to poly-a amplification (https://bmcgenomics.biomedcentral.com/articles/10.1186/s12864-018-5393-3). Therefore library compostiion is likly influenced by gene length.
+
+Wether gene length and expression level are associated to diferneces in library compostion will be analysed in the vollowing section.
+
+```{r}
+# https://support.bioconductor.org/p/69737/
+
+return_pca <-  function(object, intgroup="condition", ntop=5000, returnData=FALSE, pcs = c(1,2)){
+
+ stopifnot(length(pcs) == 2)    ### added this to check number of PCs ####
+  # calculate the variance for each gene
+  rv <- rowVars(assay(object))
+
+  # select the ntop genes by variance
+  select <- order(rv, decreasing=TRUE)[seq_len(min(ntop, length(rv)))]
+
+  # perform a PCA on the data in assay(x) for the selected genes
+  pca <- prcomp(t(assay(object)[select,]))
+  return(pca)
+}
+
+pca_loadings <- return_pca(rld, intgroup = "sequencing_type", returnData=TRUE)
+pca_loadings <- pca_loadings$rotation |> as_tibble(rownames="gene")
+```
+
+```{r}
+#library(biomaRt) messes up "select()"
+# https://www.biostars.org/p/317962/
+
+human <- biomaRt::useMart("ensembl", dataset="hsapiens_gene_ensembl")
+gene_coords=biomaRt::getBM(attributes=c("hgnc_symbol","ensembl_gene_id"),
+                  filters="hgnc_symbol",
+                  values=pca_loadings$gene,
+                  mart=human)
+
+#gene_coords$size=gene_coords$end_position - gene_coords$start_position
+
+gene_coords <- gene_coords |> 
+  mutate(gene=hgnc_symbol) |>  
+  left_join(gene_lengths_tbl |> rename(Length="size")) |> 
+  left_join(pca_loadings)
+
+gene_coords |> arrange(desc(PC1)) 
+```
+
+# Association of PC loadings and gene size?
+
+```{r}
+
+plot_title <- "Gene PC loadings vs. gene size"
+plot_subtitle <- ""
+plot_caption <- ""
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+
+
+gene_coords|>  
+  ggplot(aes(PC1,size))+
+  geom_point(alpha=0.3)+
+  stat_poly_line() +
+  stat_poly_eq()+
+  geom_smooth(method = "lm", color="red") +
+  labs("Gene PC loadings vs. gene size")
+
+ggsave_png_and_eps(output_path,plot_name)
+ggsave(paste0(output_path,plot_name, ".png"))
+############
+
+
+plot_title <- "gene PC loadings vs. gene size, log scale"
+plot_subtitle <- ""
+plot_caption <- ""
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+
+
+gene_coords|> 
+  ggplot(aes(PC1,log10(size)))+
+  geom_point(alpha=0.3)+
+  stat_poly_line() +
+  stat_poly_eq()+
+  geom_smooth(method = "lm", color="red") +
+  labs("PC 1 loadings vs. gene size, log scale")
+
+ggsave_png_and_eps(output_path,plot_name)
+ggsave(paste0(output_path,plot_name, ".png"))
+##########
+
+plot_title <- "gene PC 2 loadings vs. gene size"
+plot_subtitle <- ""
+plot_caption <- ""
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+
+gene_coords|>  
+  ggplot(aes(PC2,size))+
+  geom_point(alpha=0.3)+
+  stat_poly_line() +
+  stat_poly_eq()+
+  geom_smooth(method = "lm", color="red") +
+  labs("PC 2 loadings vs. gene size")
+
+ggsave_png_and_eps(output_path,plot_name)
+ggsave(paste0(output_path,plot_name, ".png"))
+########################
+
+
+plot_title <- "gene PC 2 loadings vs. gene size, log scale"
+plot_subtitle <- ""
+plot_caption <- ""
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+
+
+gene_coords|>  
+  ggplot(aes(PC2,log10(size)))+
+  geom_point(alpha=0.3)+
+  stat_poly_line() +
+  stat_poly_eq()+
+  geom_smooth(method = "lm", color="red") +
+  labs("gene PC loadings vs. gene size")
+ggsave_png_and_eps(output_path,plot_name)
+ggsave(paste0(output_path,plot_name, ".png"))
+
+########
+
+plot_title <- "gene PC 3 loadings vs. gene size, log scale"
+plot_subtitle <- ""
+plot_caption <- ""
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+
+gene_coords|> 
+  ggplot(aes(PC3,log10(size)))+
+  geom_point(alpha=0.3)+
+  stat_poly_line() +
+  stat_poly_eq()+
+  geom_smooth(method = "lm", color="red") +
+  labs("gene PC loadings vs. gene size")
+
+ggsave_png_and_eps(output_path,plot_name)
+ggsave(paste0(output_path,plot_name, ".png"))
+```
+
+```{r}
+gene_coords |> 
+  mutate(rank_pc1=rank(PC1),
+         rank_size=rank(size)
+         ) |> 
+  ggplot(aes(rank_pc1,rank_size)) +
+  geom_point(alpha=0.3)+
+  stat_poly_line() +
+  stat_poly_eq()+
+  geom_smooth(method = "lm", color="red")
+
+gene_coords |> 
+  mutate(rank_pc1=rank(PC1),
+         rank_size=rank(size)
+         ) |> 
+  ggplot(aes(PC1,rank_size)) +
+  geom_point(alpha=0.3)+
+  stat_poly_line() +
+  stat_poly_eq()+
+  geom_smooth(method = "lm", color="red")
+
+gene_coords |> 
+  mutate(rank_pc1=rank(PC2),
+         rank_size=rank(size)
+         ) |> 
+  ggplot(aes(PC2,rank_size)) +
+  geom_point(alpha=0.3)+
+  stat_poly_line() +
+  stat_poly_eq()+
+  geom_smooth(method = "lm", color="red")
+
+gene_coords |> 
+  mutate(rank_pc1=rank(PC1),
+         rank_size=rank(size)
+         ) |> 
+  ggplot(aes(rank_pc1,rank_size)) +
+  geom_point(alpha=0.3)+
+  stat_poly_line() +
+  stat_poly_eq()+
+  geom_smooth(method = "lm", color="red")
+
+
+gene_coords|> 
+  mutate(rank_pc1=rank(PC1,ties.method="random"),
+         rank_size=rank(size,ties.method="random")
+         ) |> 
+  mutate(top_bottom_pc=case_when(rank_pc1>(5753-100) ~ "pos_loading_top_100",
+                                 rank_pc1<100 ~ "neg_loading_top_100",
+                                  TRUE ~ "other")) |>
+  ggplot(aes(top_bottom_pc,rank_size)) +
+  geom_boxplot()+
+  ggtitle("100 genes with strongest influence on PC1")
+  
+  
+  gene_coords|> 
+  mutate(rank_pc=rank(PC2),
+         rank_size=rank(size)
+         ) |> 
+  mutate(top_bottom_pc=case_when(rank_pc>(5753-100) ~ "pos_loading_top_100",
+                                 rank_pc<100 ~ "neg_loading_top_100",
+                                  TRUE ~ "other")) |>
+  ggplot(aes(top_bottom_pc,rank_size)) +
+  geom_boxplot()+
+  ggtitle("PC2")
+  
+  
+  gene_coords|> 
+  mutate(rank_pc3=rank(PC3),
+         rank_size=rank(size)
+         ) |> 
+  mutate(top_bottom_pc=case_when(rank_pc3>(5753-100) ~ "pos_loading_top_100",
+                                 rank_pc3<100 ~ "neg_loading_top_100",
+                                  TRUE ~ "other")) |>
+  ggplot(aes(top_bottom_pc,rank_size)) +
+  geom_boxplot()+
+  ggtitle("PC3")
+  
+```
+
+# Differences of sequencing method by avergage expression?
+
+```{r}
+x <- count_tbl |> select(all_of(c(pull(meta_data, sample), "gene"))) |> mutate(all_libraries_sum=rowSums(count_tbl[,(-1)]))
+
+x <- x |> slice_sample(n=5000) |> 
+  pivot_longer(cols = GEX.BLK_0084_polyA:`hIO-UCSFi001-A`,
+               names_to = "sample",
+               values_to = "count") |> 
+  left_join(meta_data)
+
+x <- x |> filter(all_libraries_sum>500) |> 
+  mutate(gene=fct_reorder(gene,all_libraries_sum),
+         gene_rank=rank(all_libraries_sum)) |> 
+  mutate(log10_gene_rank=log(gene_rank)) |> 
+  group_by(sample) |> 
+  mutate(count_fraction=count/sum(count)) |> 
+  mutate(count_fraction_10e6=count_fraction*1000000) #this is also called CPM
+
+  
+  
+((
+x |>
+  ggplot(aes(log10_gene_rank, log10(count_fraction_10e6), fill=sequencing_type )) +
+  geom_point(alpha=0.1, shape=21,color="transparent", size=0.2 )+
+  theme_minimal()+
+  xlim(4,11)
+)+
+  (x |> ggplot(aes(log10(count_fraction)))+geom_histogram()))/
+(
+x |>
+  ggplot(aes(log10_gene_rank, log10(count_fraction_10e6), color=sequencing_type )) +
+  geom_smooth() +
+  theme_minimal()+
+  labs(title = "whole range")+
+
+x |>
+  ggplot(aes(log10_gene_rank, log10(count_fraction_10e6), color=sequencing_type )) +
+  geom_smooth() +
+  theme_minimal()+
+  xlim(10,11)+
+  labs(title = "highly expressed genes"))
+
+```
+
+```{r}
+
+plot_title <- "Average gene expression influneces differences of bulk and single cell data sets boxplots"
+plot_subtitle <- ""
+plot_caption <- ""
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+
+x |> 
+  mutate(average_expression_binned = cut(log10_gene_rank, breaks = seq(5, 16, by = 0.25))) |> 
+  filter(!is.na(average_expression_binned)) |> #filter values outside of breaks specificied above
+  
+  ggplot(aes(average_expression_binned, log10(count_fraction_10e6), color=sequencing_type )) +
+  geom_boxplot(outliers = F)+
+  facet_wrap(~cell_line)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+
+ggsave_png_and_eps(output_path,plot_name)
+ggsave(paste0(output_path,plot_name, ".png"))
+
+```
+
+```{r}
+#| fig-width: 25
+plot_title <- "Average gene expression influences differences of bulk and single cell data sets boxplots, small bins"
+plot_subtitle <- ""
+plot_caption <- ""
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+
+x |> 
+  mutate(average_expression_binned = cut(log10_gene_rank, breaks = seq(5, 16, by = 0.05))) |> 
+  filter(!is.na(average_expression_binned)) |> #filter values outside of breaks specificied above
+  
+  ggplot(aes(average_expression_binned, log10(count_fraction_10e6), color=sequencing_type )) +
+  geom_boxplot(outliers = F)+
+  facet_wrap(~cell_line)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+
+ggsave_png_and_eps(output_path,plot_name)
+
+```
+```{r}
+
+plot_title <- "Average gene expression influences differences of bulk and single cell data sets boxplots, small bins"
+plot_subtitle <- ""
+plot_caption <- ""
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+
+x |> slice_max(log10_gene_rank, n=200) |> 
+  mutate(average_expression_binned = cut(log10_gene_rank, breaks = seq(min(log10_gene_rank), max(log10_gene_rank), by = (max(log10_gene_rank)-min(log10_gene_rank))/10))) |> 
+  filter(!is.na(average_expression_binned)) |> #filter values outside of breaks specificied above
+  
+  ggplot(aes(average_expression_binned, log10(count_fraction_10e6), color=sequencing_type )) +
+  geom_boxplot(outliers = F)+
+  facet_wrap(~cell_line)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+
+ggsave_png_and_eps(output_path,plot_name)
+
+```
+
+
+In single cell RNA seq the variance of gene counts is larger than in bulk seq along the whole dynamic spectrum. Genes with low average expression are measured at higher levels in scRNA-Seq.
+
+```{r}
+
+
+
+mean_exper_tbl <-  x |> 
+  #mutate(average_expression_binned = cut(log10_gene_rank, breaks = seq(5, 16, by = 0.25))) |> 
+  #mutate(sequencing_type=ifelse(sequencing_type %in% c("3pseq"),"three_p_seq",sequencing_type)) |> 
+  mutate(bulk_or_sc=ifelse(sequencing_type %in% c("polyA", "3pseq"),"bulk","sc")) |> 
+  select(gene, sequencing_type,count_fraction_10e6#, processing,bulk_or_sc
+         ) |> 
+  pivot_wider(names_from = sequencing_type,
+              values_from = count_fraction_10e6,
+              values_fn= mean) |> 
+  janitor::clean_names() |> 
+  group_by(gene) |> 
+  summarise(mean_poly_a=mean(poly_a, na.rm=T),
+            mean_3pseq=mean(x3pseq, na.rm=T),
+            mean_sc=mean(single_cell, na.rm=T))
+
+
+################################
+
+plot_title <- "association poly a seq 3p seq"
+plot_subtitle <- ""
+plot_caption <- ""
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+
+mean_exper_tbl |> 
+  ggplot(aes(log10(mean_poly_a),log10(mean_3pseq))) +
+  geom_point()+
+    stat_poly_line()+
+  stat_poly_eq(use_label("R2"))+
+  coord_fixed()+
+    xlim(0,5)+
+  geom_smooth(color="red")
+
+ggsave_png_and_eps(output_path,plot_name)
+ggsave(paste0(output_path,plot_name, ".png"))
+
+######################
+
+plot_title <- "association poly a seq sc seq"
+plot_subtitle <- ""
+plot_caption <- ""
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+
+
+mean_exper_tbl |> 
+  ggplot(aes(log10(mean_poly_a),log10(mean_sc))) +
+  geom_point()+
+  stat_poly_line() +
+  stat_poly_eq(use_label( "R2"))+
+
+  coord_fixed()+
+    xlim(0,5)+
+  geom_smooth(color="red")
+
+ggsave_png_and_eps(output_path,plot_name)
+ggsave(paste0(output_path,plot_name, ".png"))
+
+#######################################
+
+plot_title <- "something wrong here?"
+plot_subtitle <- ""
+plot_caption <- ""
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+
+mean_exper_tbl |>  pivot_longer(mean_3pseq :mean_sc, names_to = "seq_type_2") |> 
+  ggplot(aes(log10(mean_poly_a),log10(value), colour = seq_type_2))+
+  geom_smooth()+
+  ggtitle(plot_title)
+
+ggsave_png_and_eps(output_path,plot_name)
+ggsave(paste0(output_path,plot_name, ".png"))
+```
+
+```{r}
+
+x |> slice_max(all_libraries_sum, n=500)|> 
+  ggplot(aes(log10_gene_rank, log10(count_fraction_10e6), color=sequencing_type )) +
+  geom_smooth()+
+  facet_wrap(~cell_line)+theme_bw()
+
+x |> slice_max(all_libraries_sum, n=300)|> 
+  ggplot(aes(log10_gene_rank, log10(count_fraction_10e6), color=sequencing_type )) +
+  geom_smooth()+
+  facet_wrap(~cell_line)+theme_bw()
+```
+
+```{r}
+plot_title <- "Average gene expression influneces differences of bulk and single cell data sets"
+plot_subtitle <- ""
+plot_caption <- ""
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+
+
+
+x |> group_by(sample) |>  mutate(count_fraction_quantile= ntile(count_fraction, 20)) |> 
+  group_by(sample,count_fraction_quantile) |> 
+  mutate(sum_count_fraction=sum(count_fraction)) |> 
+  distinct() |> 
+  ggplot(aes(count_fraction_quantile,sum_count_fraction,color=sequencing_type))+
+  geom_point()+
+  theme_bw()
+
+ggsave_png_and_eps(output_path,plot_name)
+ggsave(paste0(output_path,plot_name, ".png"))
+```
+
+In sc-RNA-Seq a smaller fraction of counts come from the highly expressed genes compared to bulk sequencing methods. Due to the large dynamic range this could be the "cause" of apperently higher measuments of genes (fraction of all) with an average lower expression.
+
+```{r}
+gene_sum_sc_tbl <- count_tbl |> select(gene:`hIO-UCSFi001-A`) 
+gene_sum_sc_tbl <- gene_sum_sc_tbl |> mutate(all_libraries_sum=rowSums(gene_sum_sc_tbl[,(-1)]))
+
+pca_loadings_gene_sum <- pca_loadings |> 
+  left_join(
+    gene_sum_sc_tbl |> ungroup() |>  select( gene,all_libraries_sum) |> distinct()
+  ) 
+
+
+plot_title <- "gene PC loadings vs. total expression"
+plot_subtitle <- ""
+plot_caption <- "caution: should be corrected for library sizes"
+plot_name <- make_clean_names(paste(plot_title,plot_subtitle, plot_caption))
+
+
+pca_loadings_gene_sum |> 
+  ggplot(aes(PC1,log10(all_libraries_sum)))+
+  geom_point(alpha=0.3)+
+  stat_poly_line() +
+  stat_poly_eq()+
+  geom_smooth(method = "lm", color="red") +
+  labs(plot_title,
+       caption = plot_caption)
+
+ggsave_png_and_eps(output_path,plot_name)
+ggsave(paste0(output_path,plot_name, ".png"))
+
+pca_loadings_gene_sum |> 
+  ggplot(aes(PC2,log10(all_libraries_sum)))+
+  geom_point(alpha=0.3)+
+  stat_poly_line() +
+  stat_poly_eq()+
+  geom_smooth(method = "lm", color="red") +
+  labs("gene PC loadings vs. total expression",
+       caption = "caution: should be corrected for library sizes")
+
+pca_loadings_gene_sum |> 
+  ggplot(aes(PC3,log10(all_libraries_sum)))+
+  geom_point(alpha=0.3)+
+  stat_poly_line() +
+  stat_poly_eq()+
+  geom_smooth(method = "lm", color="red") +
+  labs("gene PC loadings vs. total expression",
+       caption = "caution: should be corrected for library sizes")
+
+```
+
+```{r}
+pca_loadings_gene_sum |> 
+  mutate(rank_pc1=rank(PC1),
+         rank_all_libraries_sum=rank(all_libraries_sum)
+         ) |> 
+  ggplot(aes(rank_pc1,rank_all_libraries_sum)) +
+  geom_point()+
+  geom_smooth(method = "lm")+
+  theme_bw()
+
+pca_loadings_gene_sum |> 
+  mutate(rank_pc2=rank(PC2),
+         rank_all_libraries_sum=rank(all_libraries_sum)
+         ) |> 
+  ggplot(aes(rank_pc2,rank_all_libraries_sum)) +
+  geom_point()+
+  geom_smooth(method = "lm")+
+  theme_bw()
+
+pca_loadings_gene_sum |> 
+  mutate(rank_pc3=rank(PC3),
+         rank_all_libraries_sum=rank(all_libraries_sum)
+         ) |> 
+  ggplot(aes(rank_pc3,rank_all_libraries_sum)) +
+  geom_point()+
+  geom_smooth(method = "lm")+
+  theme_bw()
+
+
+
+```
+
+```{r}
+resultsNames(dds)
+
+
+res_sc_vs_polyA_tbl <- results(dds, contrast = c("sequencing_type", "single.cell","polyA" )) |> as_tibble(rownames="gene") |> mutate(contrast="sc_vs_polyA")
+res_sc_vs_3pseq_tbl <- results(dds, contrast = c("sequencing_type", "single.cell","3pseq" )) |> as_tibble(rownames="gene") |> mutate(contrast="sc_vs_3pseq")
+res_tbl <- bind_rows(res_sc_vs_polyA_tbl,res_sc_vs_3pseq_tbl)
+
+res_tbl |> 
+    filter(padj<0.05) |> 
+  select(gene, baseMean, contrast,log2FoldChange) |> 
+  pivot_wider(names_from = contrast, values_from = log2FoldChange) |> 
+  ggplot(aes(sc_vs_polyA,sc_vs_3pseq, colour = log10(baseMean))) +
+  geom_point()+
+  scale_colour_viridis_b()+
+  theme_bw()+
+  labs("log2 FC of sc vs ployA or 3pseq (DeSeq2)")
+```
+
+Also when testing with DeSeq2 genes with low average expression are measured at higher levels in sc libraries. Complicating is here though that there is alwazs more noise with lowly expressed genes
+
+```{r}
+
+dds$sequencing_type <- relevel(dds$sequencing_type, ref = "single-cell")
+dds <- DESeq(dds)
+results(dds)
+resultsNames(dds)
+
+sc_vs_polyA_shrink_tbl <- lfcShrink(dds, coef = "sequencing_type_polyA_vs_single.cell") |> as_tibble(rownames="gene") |>  mutate(contrast="sc_vs_polyA", log2FoldChange=-log2FoldChange)
+sc_vs_3pseq_shrink_tbl <- lfcShrink(dds, coef = "sequencing_type_3pseq_vs_single.cell") |> as_tibble(rownames="gene") |> mutate(contrast="sc_vs_3pseq", log2FoldChange=-log2FoldChange)
+res_shrink_tbl <- bind_rows(sc_vs_polyA_shrink_tbl,sc_vs_3pseq_shrink_tbl)
+
+res_shrink_tbl |> 
+    filter(padj<0.05) |> 
+  select(gene, baseMean, contrast,log2FoldChange) |> 
+  pivot_wider(names_from = contrast, values_from = log2FoldChange) |> 
+  ggplot(aes(sc_vs_polyA,sc_vs_3pseq, colour = log10(baseMean))) +
+  geom_point()+
+  scale_colour_viridis_b()+
+  theme_bw()+
+  labs("log2 FC (shrunken) of sc vs ployA or 3pseq (DeSeq2)")
+
+```
+
+```{r}
+cell_line_BIHi005.A_vs_BIHi001.B <- lfcShrink(dds, coef = "cell_line_BIHi005.A_vs_BIHi001.B") |>
+  as_tibble(rownames="gene") |>
+  mutate(contrast="cell_line_BIHi005.A_vs_BIHi001.B")
+
+cell_line_BIHi005.A_vs_BIHi001.B |>
+  ggplot(aes(log2FoldChange,-log10(pvalue))) +
+  geom_point()
+```
+
+## trying to simulate
+
+```{r}
+sim_tbl <- tibble(molecules=10^runif(10000,min = 1, max=20),
+                  gene=paste0("gene",1:10000)
+       ) |> 
+  mutate(random_nb = rnbinom(n = n(), size = 1, mu = molecules)) 
+
+sim_tbl|> ggplot(aes(molecules,random_nb)) +
+  geom_point()
+
+sim_tbl|> ggplot(aes(random_nb)) +
+  geom_histogram()
+
+sim_tbl <- sim_tbl |> mutate(molecules_scaled=molecules/sum(molecules),
+                  nb_scaled=random_nb/sum(random_nb)) |> 
+  mutate(rank_sum_scaled=rank(molecules_scaled+ nb_scaled))
+sim_tbl |> pivot_longer(molecules_scaled:nb_scaled) |>
+  ggplot(aes(rank_sum_scaled, value, colour = name))+
+  geom_point()
+```
+
+```{r}
+
+```

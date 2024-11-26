@@ -1,0 +1,643 @@
+---
+title: "case_study_distance_measures"
+format: revealjs
+editor: visual
+---
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(tidyseurat)
+library(philentropy)
+library(ggpubr)
+```
+
+https://stats.stackexchange.com/questions/111445/analysis-of-kullback-leibler-divergence
+
+```{r}
+tbl <- tibble(cluster= LETTERS[1:5], probs=c(0.05,0.1,0.15,0.3,0.4), predi=c(0.19,0.2,0.2,0.2,0.21))
+KL1 <- KL(rbind(tbl$probs, tbl$predi)) # first is target prob ("true)
+p1 <- tbl |> 
+  pivot_longer(cols = probs:predi) |> 
+  ggplot(aes(cluster,value, fill = name )) +
+  geom_col(position = "dodge")+
+  
+    ggtitle(paste0("Kullback-Leibler divergence: ", round(KL1, digits = 2) ))
+
+
+p2 <- tbl |>
+  ggplot(aes(probs, predi)) +
+  geom_point()+
+  #geom_abline(slope = 1)+
+  xlim(0,1)+
+  ylim(0,1)+
+  geom_abline(slope = 1)+
+  stat_cor(method="pearson")+
+  ggtitle(paste0("pearson correlation: ", cor(tbl$probs, tbl$predi)))
+
+p1+p2
+```
+
+```{r}
+tbl <- tibble(cluster= LETTERS[1:5], probs=c(0.05,0.1,0.15,0.3,0.4), predi=c(0.1,0.2,0.2,0.2,0.3))
+
+KL1 <- KL(rbind(tbl$probs, tbl$predi))
+p1 <- tbl |> 
+  pivot_longer(cols = probs:predi) |> 
+  ggplot(aes(cluster,value, fill = name )) +
+  geom_col(position = "dodge")+
+    ggtitle(paste0("Kullback-Leibler divergence: ", round(KL1, digits = 2) ))
+
+
+
+p2 <- tbl |>
+  ggplot(aes(probs, predi)) +
+  geom_point()+
+  geom_abline(slope = 1)+
+  xlim(0,1)+
+  ylim(0,1)+
+  ggtitle(paste0("pearson correlation: ", cor(tbl$probs, tbl$predi)))
+
+p1+p2
+```
+
+```{r}
+tbl <- tibble(cluster= LETTERS[1:5], probs=c(0.05,0.1,0.15,0.3,0.4), predi=c(0.1,0.05,0.35,0.2,0.3))
+
+KL1 <- KL(rbind(tbl$probs, tbl$predi))
+p1 <- tbl |> 
+  pivot_longer(cols = probs:predi) |> 
+  ggplot(aes(cluster,value, fill = name )) +
+  geom_col(position = "dodge")+
+    ggtitle(paste0("Kullback-Leibler divergence: ", round(KL1, digits = 2) ))
+
+
+
+p2 <- tbl |>
+  ggplot(aes(probs, predi)) +
+  geom_point()+
+  geom_abline(slope = 1)+
+  xlim(0,1)+
+  ylim(0,1)+
+  ggtitle(paste0("pearson correlation: ", cor(tbl$probs, tbl$predi)))
+
+p1+p2
+
+```
+
+```{r message=FALSE, warning=FALSE}
+library(Seurat)
+library(tidyverse)
+library(tidyseurat)
+library(BayesPrism)
+library(readxl)
+library(janitor)
+library(patchwork)
+#library(biomaRt) gives problems with "select"
+library(InstaPrism)
+library(MuSiC)
+library(TOAST)
+library(SummarizedExperiment)
+library(SingleCellExperiment)
+library(tidySingleCellExperiment)
+```
+
+```{r data loading}
+dataset_name <- "hub_01"
+path_single_cell_experiment <-  paste0("intermediate_data/" , "single_cell_experiment", "RNA", "counts" ,dataset_name,".rds"  )
+path_bulk_mtx <-paste0("intermediate_data/" , "bulk_mtx", "RNA", "counts" ,dataset_name,".rds" )
+
+
+if (!(
+  file.exists(path_single_cell_experiment) & file.exists(path_bulk_mtx)
+    )) {
+  source("C:/Users/Danne/R_projects/hub_cubi_cusco/bulk_and_single_cell_dataset_hamonization_for_deconv.R")
+
+}else{
+  sce <- read_rds(path_single_cell_experiment)
+  bulk_mtx <- read_rds(path_bulk_mtx) 
+  obj <- read_rds(paste0("intermediate_data/", dataset_name, "_integrated_", ".rds"))
+  gene_ensg_mapping_vec <-  read_rds( "intermediate_data/gene_ensg_mapping_vec.rds")
+  ensg_gene_mapping_vec <- read_rds("intermediate_data/ensg_gene_mapping_vec.rds")
+}
+
+hub_01_meta_data <-  read_csv( "intermediate_data/hub_01_meta_data.csv", )
+
+```
+
+```{r}
+p1 <- sce |>
+  ggplot(aes(umapmnn_1,
+             umapmnn_2,
+             color=harmony_clusters_res0.4))+
+  geom_point()+
+  theme_void()+
+  guides(colour = guide_legend(override.aes = list(size=5)))+
+  coord_fixed()
+
+p2<- sce |>
+  ggplot(aes(umapmnn_1,
+             umapmnn_2,
+             color=m_e_class))+
+  geom_point()+
+  theme_void()+
+  guides(colour = guide_legend(override.aes = list(size=5)))+
+  coord_fixed()
+
+p1+p2
+```
+
+cluster 10 removed
+
+```{r}
+sce <- sce |> filter(harmony_clusters_res0.4!="10") 
+```
+
+```{r}
+
+sc_group_counts <- sce |> group_by(cell_line_cellranger, m_e_class) |> summarise(n=n())|> mutate(fraction=n/sum(n))
+
+sc_m_e_bar_chart <-  sce |> group_by(cell_line_cellranger, m_e_class) |> summarise(n=n())|> mutate(fraction=n/sum(n)) |>
+  ggplot(aes(cell_line_cellranger,fraction, fill = m_e_class)) +
+  geom_col() +
+  ggtitle("'ground-truth' proportions single-cell data set")
+
+sc_cluster_chart <-  sce |> group_by(cell_line_cellranger, harmony_clusters_res0.4) |> summarise(n=n())|> mutate(fraction=n/sum(n)) |>
+  ggplot(aes(cell_line_cellranger,fraction, fill = harmony_clusters_res0.4)) +
+  geom_col() +
+  ggtitle("'ground-truth' proportions single-cell data set")
+
+sc_m_e_bar_chart/sc_cluster_chart
+ggsave("output/hub_01_MuSiC_sc_m_e_bar_chart.clusters.png")
+```
+
+```{r}
+ sce |> group_by(cell_line_cellranger, m_e_class) |>
+  summarise(n=n()) |> mutate(fraction=n/sum(n), sum=sum(n)) |>
+  ggplot(aes(cell_line_cellranger,fraction, fill = m_e_class)) +
+  geom_col() +
+  ggtitle("'ground-truth' proportions single-cell data set")
+
+```
+
+# music unfiltered
+
+```{r}
+Est.prop_unfiltered = music_prop(bulk.mtx = bulk_mtx,
+                               sc.sce = sce,
+                               clusters = 'm_e_class',
+                               samples = 'cell_line_cellranger',
+                               verbose = F)
+
+
+
+m_e_prop_plotter <- function(x){x |> 
+    as_tibble(rownames="sample") |> 
+  left_join(hub_01_meta_data |> mutate(sample=str_replace_all(sample, "-", "."))) |> 
+  pivot_longer(cols = M:E, names_to = "m_e_class" , values_to = "fraction") |>
+    mutate(name=paste0("hIO_",cell_line)) |> 
+  separate(name_2, into = "prep", remove = F) |> 
+  mutate(prep_sample=paste0(sample, "_", prep)) |> 
+   ggplot(aes(prep_sample,fraction, fill = m_e_class)) +  
+  geom_col() +
+  ggtitle("MuSiC")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+    facet_grid(~name,scales = "free_x", space = "free_x")
+  
+}
+
+p_m_e_unfiltered <- Est.prop_unfiltered$Est.prop.weighted |> m_e_prop_plotter()
+
+sc_m_e_bar_chart/p_m_e_unfiltered
+ggsave("output/hub_01_MuSiC_sc_m_e_bar_chart_unflitered.png")
+
+```
+
+```{r}
+Est.prop.2_unfiltered = music_prop(bulk.mtx = bulk_mtx,
+                               sc.sce = sce,
+                               clusters = 'harmony_clusters_res0.4',
+                               samples = 'cell_line_cellranger',
+                               verbose = F)
+
+
+cluster_prop_plotter <- function(x){x |> 
+    as_tibble(rownames="sample") |>
+  left_join(hub_01_meta_data |> mutate(sample=str_replace_all(sample, "-", "."))) |> 
+  mutate(name=paste0("hIO_",cell_line)) |> 
+  pivot_longer(cols = "7":"8", names_to = "cluster" , values_to = "fraction") |>
+    separate(name_2, into = "prep", remove = F) |> 
+  mutate(prep_sample=paste0(sample, "_", prep)) |> 
+   ggplot(aes(prep_sample,fraction, fill = cluster)) +  
+  geom_col() +
+  ggtitle("MuSiC")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+    facet_grid(~name,scales = "free_x", space = "free_x")}
+
+p_clusters_unfiltered <- Est.prop.2_unfiltered$Est.prop.allgene |>
+  cluster_prop_plotter()
+
+
+sc_cluster_chart/p_clusters_unfiltered
+ggsave("output/hub_01_MuSiC_clusters_bar_chart_unflitered.png")
+```
+
+```{r}
+Idents(obj) <- "m_e_class"
+markers <- FindAllMarkers(object = obj,only.pos = T, min.pct = 0.5 ) |> as_tibble()
+
+sig_markers_tbl <-  markers |> 
+  group_by(cluster) |> 
+  slice_max(avg_log2FC, n=300) |> 
+  slice_min(p_val_adj, n=100) |> 
+  mutate(pct_diff=pct.1-pct.2) |> 
+  slice_max(pct_diff, n=300)
+
+sig_markers <- sig_markers_tbl|>
+  select(gene) |> 
+  distinct() |> 
+  pull(gene)
+gene_ensg_mapping_vec <-  read_rds( "intermediate_data/gene_ensg_mapping_vec.rds")
+  sig_markers <- gene_ensg_mapping_vec[sig_markers]
+  
+sig_markers <- intersect(sig_markers,rownames(bulk_mtx))
+sce_trimmed <- sce[rownames(sce) %in% sig_markers,]  
+```
+
+```{r}
+Est.prop_unfiltered = music_prop(bulk.mtx = bulk_mtx[sig_markers,],
+                               sc.sce = sce_trimmed,
+                               clusters = 'm_e_class',
+                               samples = 'cell_line_cellranger',
+                               verbose = T)
+
+p_m_e_unfiltered <- Est.prop_unfiltered$Est.prop.weighted |> m_e_prop_plotter()
+
+sc_m_e_bar_chart/p_m_e_unfiltered
+
+```
+
+```{r}
+sce_BIHi005 <- sce |>  filter(cell_line_cellranger %in% c("hIO_BIHi005-A", "hIO_BIHi001-B"))
+
+Idents(obj) <- "m_e_class"
+markers <- FindAllMarkers(object = obj,only.pos = T, min.pct = 0.5 ) |> as_tibble()
+
+sig_markers_tbl <-  markers |> 
+  group_by(cluster) |> 
+  slice_max(avg_log2FC, n=300) |> 
+  slice_min(p_val_adj, n=100) |> 
+  mutate(pct_diff=pct.1-pct.2) |> 
+  slice_max(pct_diff, n=10)
+
+sig_markers <- sig_markers_tbl|>
+  select(gene) |> 
+  distinct() |> 
+  pull(gene)
+
+gene_ensg_mapping_vec <-  read_rds( "intermediate_data/gene_ensg_mapping_vec.rds")
+sig_markers <- gene_ensg_mapping_vec[sig_markers]
+
+sce_BIHi005_trimmed <- sce_BIHi005[rownames(sce) %in% sig_markers,]  
+
+sig_markers <- intersect(sig_markers,rownames(bulk_mtx))
+```
+
+```{r}
+Est.prop_unfiltered = music_prop(bulk.mtx = bulk_mtx[sig_markers,],
+                               sc.sce = sce_BIHi005_trimmed,
+                               clusters = 'm_e_class',
+                               samples = 'cell_line_cellranger',
+                               verbose = F)
+
+p_m_e_unfiltered <- Est.prop_unfiltered$Est.prop.weighted |> m_e_prop_plotter()
+
+sc_m_e_bar_chart/p_m_e_unfiltered
+
+```
+
+```{r}
+bulk_mtx_trimmed <- bulk_mtx[sig_markers,]
+rownames(bulk_mtx_trimmed) <- ensg_gene_mapping_vec[sig_markers]
+
+pseudo_bulk_tbl<- tibble()
+
+obj_trimmed <- obj[ensg_gene_mapping_vec[sig_markers],]
+
+for (cell_line_i in unique(obj_trimmed$cell_line_cellranger)) {
+  
+    
+    list_i <- obj_trimmed |> 
+    filter(cell_line_cellranger==cell_line_i)|>
+    AggregateExpression(assays = "uncorrected_RNA",
+                           group.by = "m_e_class",
+                          ) 
+  pseudo_bulk_tbl <- bind_rows(pseudo_bulk_tbl,
+                               list_i[[1]] |> as_tibble(rownames="gene") |> mutate(cell_line=cell_line_i))
+  
+  
+}
+
+
+cell_numbers_m_e <- obj |> 
+  group_by(cell_line_cellranger,m_e_class) |> 
+  summarise(cell_number_per_cluster=n())
+
+
+counts_per_cell_from_sc_data_tbl <- pseudo_bulk_tbl |> #table of summed counts of cells in clusters E and M
+  pivot_longer(cols = E:M,
+               names_to = "m_e_class",
+               values_to = "gene_sum_per_cluster") |> 
+  left_join(rename(cell_numbers_m_e,
+                   cell_line_cellranger="cell_line")) |> 
+  mutate(beta=gene_sum_per_cluster/cell_number_per_cluster) |> # beta is counts per cell
+  select(-gene_sum_per_cluster,-cell_number_per_cluster) |> 
+  pivot_wider(names_from = m_e_class, values_from = beta,names_prefix = "beta_") |> 
+  mutate(log_10_FC_bE_over_bM=log10(beta_E/beta_M))
+counts_per_cell_from_sc_data_tbl
+```
+
+```{r}
+#rank genes by most counts per cell, average over cell lines
+ranked_counts_per_cell_from_sc_data_tbl <-  counts_per_cell_from_sc_data_tbl |> 
+  group_by(cell_line) |> 
+  mutate(rank_bM_or_bE=ifelse(log_10_FC_bE_over_bM>0, rank(beta_E),rank(beta_M))) |> 
+  group_by(gene) |> 
+  mutate(mean_rank_bM_or_bE=mean(rank_bM_or_bE)) |> 
+  ungroup() |> 
+  mutate(marker_for=ifelse(log_10_FC_bE_over_bM>0, "E","M"))
+
+
+ranked_counts_per_cell_from_sc_data_tbl |> 
+   filter(marker_for=="E") |> 
+  arrange(desc(mean_rank_bM_or_bE))
+
+ranked_counts_per_cell_from_sc_data_tbl |> 
+   filter(marker_for=="M") |> 
+  arrange(desc(mean_rank_bM_or_bE))
+```
+
+```{r}
+bulk_counts_markers_tbl <- bulk_mtx[sig_markers,] |>
+  as_tibble(rownames="gene") |>
+  mutate(gene=ensg_gene_mapping_vec[gene]) |> 
+  pivot_longer(cols = starts_with("GEX"),
+               names_to = "library",
+               values_to = "bulk_count")
+bulk_counts_markers_tbl
+```
+
+```{r}
+#add bulk counts to tibble
+ranked_counts_per_cell_from_sc_data_tbl <- ranked_counts_per_cell_from_sc_data_tbl |>
+  right_join(bulk_counts_markers_tbl) |> 
+  mutate(marker_beta=ifelse(log_10_FC_bE_over_bM>1,beta_E,beta_M)) |> 
+  mutate(bulk_count_over_beta=(bulk_count/marker_beta)) |> 
+  relocate(bulk_count_over_beta)
+ranked_counts_per_cell_from_sc_data_tbl
+```
+
+```{r}
+ranked_counts_per_cell_from_sc_data_tbl|> 
+  ggplot(aes(log(marker_beta),bulk_count_over_beta, color=marker_for)) +
+  geom_point() +
+  geom_smooth(method = "lm",
+              formula = y ~  x)+
+  facet_wrap(~library, scales = "free")+
+  ggtitle("all points")
+
+ggsave("output/comparing_factors_in_linear_combination_all_points.png")
+
+
+ranked_counts_per_cell_from_sc_data_tbl|> 
+  group_by(gene,library) |>
+  mutate(mean_bulk_count_over_beta=mean(bulk_count_over_beta), mean_marker_beta=mean(marker_beta)) |> 
+  select(mean_bulk_count_over_beta,mean_marker_beta,marker_for,library) |> 
+  distinct() |> 
+  ggplot(aes(log(mean_marker_beta),mean_bulk_count_over_beta, color=marker_for)) +
+  geom_point() +
+  geom_smooth(method = "lm",
+              formula = y ~ x)+
+  facet_wrap(~library, scales = "free")+
+  ggtitle("means per sc cell type")
+
+ggsave("output/comparing_factors_in_linear_combination_mean.png")
+
+ranked_counts_per_cell_from_sc_data_tbl|> 
+  ggplot(aes(log(marker_beta),log(bulk_count_over_beta), color=marker_for)) +
+  geom_point() +
+   geom_smooth(method = "lm",
+              formula = y ~  x)+
+  facet_wrap(~library)
+```
+
+serious doubts that single cell proportions are the same as in bulk samples
+
+```{r}
+dat |> 
+  group_by(marker_for,library) |> 
+  mutate(model = list(lm(slope ~ 0 + counts_per_M_E))) %>%     # A list-column of the same model is created here
+  group_modify(~ .x %>%
+    summarise(model = list(lm(slope ~ 0 + counts_per_M_E))))   %>%  # Fit models with zero intercept
+  mutate(slope = map_dbl(model, ~ coef(.x)[1])) |>  # Extract the slope (coefficient of 'x'   
+  select(-model) |>  
+  pivot_wider(names_from = marker_for, values_from = slope) |> 
+  mutate(fc_m_to_e=M/E)
+
+
+dat |> 
+  group_by(marker_for,library) |> 
+  mutate(model = list(lm(slope ~  counts_per_M_E))) %>%     # A list-column of the same model is created here
+  group_modify(~ .x %>%
+    summarise(model = list(lm(slope ~  counts_per_M_E))))   %>%  # Fit models with zero intercept
+  mutate(slope = map_dbl(model, ~ coef(.x)[1])) |>  # Extract the slope (coefficient of 'x'   
+  select(-model) |>  
+  pivot_wider(names_from = marker_for, values_from = slope) |> 
+  mutate(fc_m_to_e=M/E)
+
+
+```
+
+# Bisque
+
+```{r}
+library(BisqueRNA)
+library(Biobase)
+bulk.eset <- Biobase::ExpressionSet(assayData = bulk_mtx)
+
+colnames(bulk.eset) <- case_when(
+colnames(bulk.eset)=="GEX.BLK_0083_polyA" ~ "hIO_BIHi001-B",
+colnames(bulk.eset)=="GEX.BLK_0084_polyA" ~ "hIO_BIHi005-A",
+colnames(bulk.eset)=="GEX.BLK_0085_polyA" ~ "hIO_BIHi250-A",
+colnames(bulk.eset)=="GEX.BLK_0086_polyA"~ "hIO_UCSFi001-A",
+TRUE ~ colnames(bulk.eset))
+
+# obj <- obj |>
+#   mutate(donor=as.integer(as.factor(cell_line_doublet_cellranger))) |> 
+#   mutate()
+
+
+colnames(sce) <- paste0(colnames(sce), ".", sce$cell_line_cellranger)
+
+obj <- UpdateSeuratObject(obj)
+
+sc.eset <- BisqueRNA::SeuratToExpressionSet(as.Seurat(sce,
+                                                      counts = "counts",
+                                                      data = NULL),
+                                            delimiter=".",
+                                            position=3,
+                                            version="v3")
+########
+sce_less_M <- sce |> mutate(random_T=sample(c(FALSE,TRUE, FALSE),size=ncol(sce), replace = T)) |> 
+  filter((m_e_class=="M" & random_T) | m_e_class=="E" ) 
+  
+sc.eset_less_M <- BisqueRNA::SeuratToExpressionSet(as.Seurat(sce_less_M,
+                                                      counts = "counts",
+                                                      data = NULL),
+                                            delimiter=".",
+                                            position=3,
+                                            version="v3")
+
+###########
+sce_less_E <- sce |> mutate(random_T=sample(c(FALSE,TRUE, FALSE),size=ncol(sce), replace = T)) |> 
+  filter((m_e_class=="E" & random_T) | m_e_class=="M" ) 
+
+sc.eset_less_E <- BisqueRNA::SeuratToExpressionSet(as.Seurat(sce_less_E,
+                                                      counts = "counts",
+                                                      data = NULL),
+                                            delimiter=".",
+                                            position=3,
+                                            version="v3")
+##############
+
+
+sc.eset$SubjectName <- sce$cell_line_cellranger
+sc.eset$cellType <- sce$m_e_class
+
+sc.eset_less_M$SubjectName <- sce_less_M$cell_line_cellranger
+sc.eset_less_M$cellType <- sce_less_M$m_e_class
+
+sc.eset_less_E$SubjectName <- sce_less_E$cell_line_cellranger
+sc.eset_less_E$cellType <- sce_less_E$m_e_class
+
+
+res_bisque_use_overlap <- BisqueRNA::ReferenceBasedDecomposition(bulk.eset, sc.eset, markers=NULL, use.overlap=TRUE)
+
+res_bisque_use_overlap_less_M <- BisqueRNA::ReferenceBasedDecomposition(bulk.eset, sc.eset_less_M, markers=NULL, use.overlap=TRUE)
+
+res_bisque_use_overlap_less_E <- BisqueRNA::ReferenceBasedDecomposition(bulk.eset, sc.eset_less_E, markers=NULL, use.overlap=TRUE)
+
+res_bisque_no_overlap <- BisqueRNA::ReferenceBasedDecomposition(bulk.eset, sc.eset, markers=NULL, use.overlap=FALSE)
+
+res_bisque_no_overlap_less_M <- BisqueRNA::ReferenceBasedDecomposition(bulk.eset, sc.eset_less_M, markers=NULL, use.overlap=FALSE)
+
+res_bisque_no_overlap_less_E <- BisqueRNA::ReferenceBasedDecomposition(bulk.eset, sc.eset_less_E, markers=NULL, use.overlap=FALSE)
+
+```
+
+```{r}
+m_e_prop_plotter <- function(x){x |> 
+    as_tibble(rownames="sample") |> 
+  left_join(hub_01_meta_data |> mutate(sample=str_replace_all(sample, "-", "."))) |> 
+  pivot_longer(cols = M:E, names_to = "m_e_class" , values_to = "fraction") |>
+    mutate(name=paste0("hIO_",cell_line)) |> 
+  separate(name_2, into = "prep", remove = F) |> 
+  mutate(prep_sample=paste0(sample, "_", prep)) |> 
+   ggplot(aes(prep_sample,fraction, fill = m_e_class)) +  
+  geom_col() +
+  ggtitle("MuSiC")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+    facet_grid(~name,scales = "free_x", space = "free_x")
+}
+
+dings <- hub_01_meta_data |>
+  mutate(sample=str_replace_all(sample, "-", ".")) |>
+  mutate(
+  library= case_when(
+  sample=="GEX.BLK_0083_polyA" ~ "hIO_BIHi001-B",
+  sample=="GEX.BLK_0084_polyA" ~ "hIO_BIHi005-A",
+  sample=="GEX.BLK_0085_polyA" ~ "hIO_BIHi250-A",
+  sample=="GEX.BLK_0086_polyA"~ "hIO_UCSFi001-A",
+  TRUE ~sample)) 
+
+res_bisque_use_overlapm_e_prop_plotter <- function(x){x |> 
+  as_tibble(rownames="cell_type") |>
+  pivot_longer(cols = !contains("cell_type"),
+               names_to = "library") |> 
+  left_join(dings) |>
+  separate(name_2, into = "prep", remove = F) |> 
+    mutate(prep_sample=paste0(sample, "_", prep)) |> 
+  ggplot(aes(prep_sample, value, fill=cell_type)) +
+  geom_col() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+    facet_grid(~cell_line,
+               scales = "free_x",
+               space = "free_x")
+  
+}
+```
+
+```{r}
+#| fig-height: 12
+
+p1 <- sce |> group_by(cell_line_cellranger, m_e_class) |> summarise(n=n())|> mutate(fraction=n/sum(n)) |>
+  ggplot(aes(cell_line_cellranger,fraction, fill = m_e_class)) +
+  geom_col() +
+  ggtitle(" original 'ground-truth' proportions single-cell data set")
+
+p2 <-res_bisque_no_overlap$bulk.props |> 
+  res_bisque_use_overlapm_e_prop_plotter() +
+  ggtitle("Bulk deconvolution results: Bisque, NO sc-bulk pairs specified)
+ ")
+
+p3 <-res_bisque_use_overlap$bulk.props |> 
+  res_bisque_use_overlapm_e_prop_plotter() +
+  ggtitle("Bulk deconvolution results: Bisque, sc-bulk pairs specified  ")
+
+p1/p2/p3
+
+ggsave("output/2024-09-30_plots_for_harald/Bisque_ground_truth_sc_dataset.png")
+###################
+p4 <-sce_less_M |> group_by(cell_line_cellranger, m_e_class) |> summarise(n=n())|> mutate(fraction=n/sum(n)) |>
+  ggplot(aes(cell_line_cellranger,fraction, fill = m_e_class)) +
+  geom_col() +
+  ggtitle(" 'E-downsampled reference'  proportions single-cell data set")
+
+p5 <-res_bisque_no_overlap_less_M$bulk.props |> 
+  res_bisque_use_overlapm_e_prop_plotter() +
+  ggtitle("Bulk deconvolution results: Bisque, NO sc-bulk pairs specified ")
+
+p6 <-res_bisque_use_overlap_less_M$bulk.props |> 
+  res_bisque_use_overlapm_e_prop_plotter() +
+  ggtitle("Bulk deconvolution results: Bisque, sc-bulk pairs specified")
+
+p4/p5/p6
+
+ggsave("output/2024-09-30_plots_for_harald/Bisque_less_M_sc_dataset.png")
+##############################
+p7 <-sce_less_E |> group_by(cell_line_cellranger, m_e_class) |> summarise(n=n())|> mutate(fraction=n/sum(n)) |>
+  ggplot(aes(cell_line_cellranger,fraction, fill = m_e_class)) +
+  geom_col() +
+  ggtitle(" - 'E-downsampled reference' proportions single-cell data set")
+
+p8 <-res_bisque_no_overlap_less_E$bulk.props |> 
+  res_bisque_use_overlapm_e_prop_plotter() +
+  ggtitle("Bulk deconvolution results: Bisque, NO sc-bulk pairs specified")
+
+p9 <-res_bisque_use_overlap_less_E$bulk.props |> 
+  res_bisque_use_overlapm_e_prop_plotter() +
+  ggtitle("Bulk deconvolution results: Bisque, sc-bulk pairs specified")
+
+p7/p8/p9
+
+ggsave("output/2024-09-30_plots_for_harald/Bisque_less_E_sc_dataset.png")
+########
+
+```
+
+Bisque is very sensitive to pairing of bulk and sc datasets, even the unpaired mode isn't robust to changes in cellnumbers of the sc dataset reference. Quote: 'If there are no single-cell samples that have bulk expression available, we assume that the observed mean of Yj (=Zp, sum of sc dataset gene counts, counts per cell type \* proportion) is the true mean of our goal distribution for the transformed Xj (bulk count for gene j). --\> That's a pretty bad asumption, if you want to predict p.
+
+```{r}
+res_bisque_use_overlap$bulk.props |> 
+  res_bisque_use_overlapm_e_prop_plotter() +
+  ggtitle("Results BisqueSeq 'with overlaps' ")
+```

@@ -1,0 +1,330 @@
+---
+title: "first_exploration"
+format: html
+editor: visual
+---
+
+```{r message=FALSE, warning=FALSE}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(magrittr)
+library(ggplot2)
+library(Seurat)
+library(tidyseurat)
+library(BPCells)
+#library(Azimuth)
+library(stringr)
+library(ggridges)
+library(forcats)
+```
+
+# load tag calls separately
+
+```{r}
+tag_calls_summary <- read_csv("C:/Users/Danne/raw_data/cubi_cusco/hub_01_outs/multi/multiplexing_analysis/tag_calls_summary.csv")
+tag_calls_per_cell <- read_csv("C:/Users/Danne/raw_data/cubi_cusco/hub_01_outs/multi/multiplexing_analysis/tag_calls_per_cell.csv")
+assignment_confidence_table <- read_csv("C:/Users/Danne/raw_data/cubi_cusco/hub_01_outs/multi/multiplexing_analysis/assignment_confidence_table.csv")
+```
+
+# A
+
+## load gene reads and hashtag reads with BPCells
+
+```{r}
+hub_01 <- Read10X_h5(
+  "C:/Users/Danne/raw_data/cubi_cusco/hub_01_outs/multi/count/raw_feature_bc_matrix.h5",use.names = TRUE
+    
+)
+#separate the matrix in hashtag and gene reads
+
+cmo_hub_01 <- hub_01$`Multiplexing Capture`
+hub_01 <- hub_01$`Gene Expression`
+```
+
+```{r}
+#| echo: false
+#| eval: false
+
+# Write the matrix to a directory
+ write_matrix_dir(
+   mat = hub_01,
+   dir = 'BPcell_matrices/hub_01')
+ 
+write_matrix_dir(
+   mat = cmo_hub_01,
+   dir = 'BPcell_matrices/cmo_hub_01')
+```
+
+# B
+
+# Cellbender corrected
+
+# load gene reads and hashtag reads with BPCells
+
+```{r}
+#| echo: false
+#| eval: false
+path <-  "C:\\Users\\Danne\\raw_data\\cubi_cusco\\cellbender\\hub_01\\hub_01_cellbender_corrected_filtered_seurat.h5"
+hub_01_cellbender <- Read10X_h5(filename = path,unique.features = TRUE)
+
+setdiff(rownames(hub_01_cellbender)[!(grepl("ENSG", rownames(hub_01_cellbender)))],
+rownames(hub_01)) |> length()
+
+write_matrix_dir(hub_01_cellbender, dir = 'BPcell_matrices/hub_01_cellbender')
+```
+
+# create Seurat object
+
+```{r}
+hub_01_cellbender <- open_matrix_dir(dir = "BPcell_matrices/hub_01_cellbender")
+
+hub_01 <- open_matrix_dir(dir = "BPcell_matrices/hub_01")
+
+
+intersecting_cells <- intersect(colnames(hub_01_cellbender), colnames(hub_01))
+hub_01_seurat <- CreateSeuratObject(hub_01_cellbender[,intersecting_cells])
+
+hub_01_raw <- CreateAssay5Object(hub_01[,intersecting_cells])
+
+hub_01_seurat[["uncorrected_RNA"]] <- hub_01_raw
+
+```
+
+# basic processing
+
+```{r}
+for (assay_it in Assays(hub_01_seurat)) {
+  DefaultAssay(hub_01_seurat) <- assay_it
+  hub_01_seurat <- hub_01_seurat |> 
+  NormalizeData() 
+    
+  hub_01_seurat <- hub_01_seurat |>FindVariableFeatures(assay = assay_it) |> 
+  ScaleData() 
+  print("runPCA")
+  hub_01_seurat <- hub_01_seurat |> RunPCA(assay = assay_it,reduction.name = paste0("pca.",assay_it)) 
+  print("neighbors")
+  hub_01_seurat <- hub_01_seurat |> FindNeighbors(dims = 1:30,
+                                                  reduction = paste0("pca.",assay_it),
+                                                  assay = assay_it) 
+  print("clusters")
+  hub_01_seurat <- hub_01_seurat |>  FindClusters(
+    resolution = 0.8,
+    verbose = FALSE,
+    cluster.name =paste0(assay_it, "_clusters_leiden_res0.8"),algorithm=4
+    #graph.name = paste0("kNN_","pca.",assay_it)
+    ) 
+  
+  hub_01_seurat <- hub_01_seurat |>
+    RunUMAP(dims = 1:30, reduction = paste0("pca.",assay_it),
+            assay = assay_it,
+            reduction.name =paste0("umap.",assay_it) )
+  
+}
+
+
+```
+
+## investigate PC
+
+```{r}
+
+
+  dat <- hub_01_seurat@reductions$pca.RNA@feature.loadings |>
+  as_tibble(rownames="gene") |>
+  select(gene, PC_1:PC_5) |>
+  pivot_longer(cols = PC_1:PC_5,names_to = "PC") |> 
+  group_by(PC) |>
+    mutate(rank_per_PC= rank(value)) |> 
+    mutate(top_loadings=if_else(rank_per_PC<15 | rank_per_PC>1985, TRUE,FALSE))
+
+PC_plot_list <- list()
+for (pc_iterate in paste0("PC","_", as.character(1:5))) {
+  
+ PC_plot_list[[pc_iterate]] <- dat |>
+  filter(top_loadings, PC==pc_iterate) |>
+  mutate(gene=fct_reorder(gene, rank_per_PC)) |> 
+  ggplot(aes(value, gene))  +geom_point()
+  
+}
+
+
+  
+PC_plot_list
+```
+
+```{r}
+convert_vector <- c("CMO302"="hIO_BIHi005-A",
+"CMO301"="hIO_BIHi001-B",
+"CMO303"="hIO_BIHi250-A",
+"CMO304"="hIO_UCSFi001-A")
+
+# make metadata column: cell_line_cellranger -- match CMOxx to cell line name, adjusted feature_call column from cellranger multi
+cell_barcodes <- tag_calls_per_cell |>
+  right_join(tibble(cell_barcode=colnames(hub_01_seurat)), keep=T)  |>
+  mutate(cell_line_cellranger=str_replace_all(feature_call,convert_vector) |>
+           replace_na("no cell"))
+
+
+# make metadata column: singlet_doublet_cellranger -- cellranger calls with levels doublet, singlet no cell(not called a cell from cellranger and therefore not in file per_sample_outs but in file multi>count)
+#adjusted feature_call column from cellranger multi
+cell_barcodes <-  cell_barcodes |> mutate(singlet_doublet_cellranger = ifelse(grepl("\\|", cell_line_cellranger), "doublet", 
+                                                 ifelse(cell_line_cellranger=="no cell","no cell","singlet"
+                                                        )))
+# make metadata column: cell_line_doublet_cellranger --- like singlet_doublet_cellranger but with cell line names
+cell_barcodes <-  cell_barcodes |> mutate(cell_line_doublet_cellranger = ifelse(grepl("\\|", cell_line_cellranger), "doublet",cell_line_cellranger))
+
+# add relevant dataframe columns to Seurat Metadata
+cell_barcodes <- cell_barcodes |>
+  as.data.frame()
+rownames(cell_barcodes) <- cell_barcodes$cell_barcode.y
+cell_barcodes <- cell_barcodes[,c("cell_line_cellranger","singlet_doublet_cellranger","cell_line_doublet_cellranger")]
+hub_01_seurat <- AddMetaData(hub_01_seurat,cell_barcodes)
+
+saveRDS(
+   object = hub_01_seurat,
+   file = "intermediate_data/seurat_obj_hub_01_raw_and_corrected.Rds"
+)
+```
+
+# What is this
+
+```{r}
+library(rhdf5)
+h5f = H5Fopen("C:\\Users\\Danne\\raw_data\\cubi_cusco\\cellbender\\hub_01\\hub_01_cellbender_corrected_filtered.h5")
+corrected = H5Fopen("C:\\Users\\Danne\\raw_data\\cubi_cusco\\cellbender\\hub_01\\hub_01_cellbender_corrected.h5")
+cell_prob_tbl <- tibble(
+cell=corrected$metadata$barcodes_analyzed,
+cell_probability= corrected$droplet_latents$cell_probability)
+
+cell_prob_tbl <- cell_prob_tbl |> filter(cell %in% colnames(hub_01))
+cell_prob_vec <- cell_prob_tbl |> pull(cell_probability)
+names(cell_prob_vec) <- cell_prob_tbl |> pull(cell)
+hub_01_seurat <- AddMetaData(hub_01_seurat, col.name = "cellbender_prob_to_be_cell",cell_prob_vec)
+#hub_01_cellbender@meta.data$cellbender_prob_to_be_cell <- as.double(hub_01_cellbender@meta.data$cellbender_prob_to_be_cell)
+
+```
+
+```{r}
+plots <- list()
+DefaultAssay(hub_01_seurat) <- "RNA"
+
+plots[[31]] <- hub_01_seurat |> DimPlot(group.by = "RNA_clusters_leiden_res0.8", label = T)+ theme(legend.position = "none")
+
+
+plots[[1]] <- hub_01_seurat |> DimPlot(group.by = "cell_line_cellranger")+ theme(legend.position = "none")
+plots[[2]] <- hub_01_seurat |> DimPlot(group.by = "singlet_doublet_cellranger",order = "doublet")+ theme(legend.position = "none")
+plots[[3]] <- hub_01_seurat |> DimPlot(group.by = "cell_line_doublet_cellranger")+ theme(legend.position = "none")
+plots[[4]] <- hub_01_seurat |> FeaturePlot("cellbender_prob_to_be_cell", min.cutoff = 0.98, cols = c("red","black"))+ theme(legend.position = "none")
+
+
+
+DefaultAssay(hub_01_seurat) <- "uncorrected_RNA" 
+
+plots[[32]] <- hub_01_seurat |> DimPlot(group.by = "uncorrected_RNA_clusters_leiden_res0.8", label = T)+ theme(legend.position = "none")
+
+plots[[5]] <- hub_01_seurat |> DimPlot(group.by = "cell_line_cellranger")
+plots[[6]] <- hub_01_seurat |> DimPlot(group.by = "singlet_doublet_cellranger",order = "doublet")
+plots[[7]] <- hub_01_seurat |> DimPlot(group.by = "cell_line_doublet_cellranger")
+plots[[8]] <- hub_01_seurat |> FeaturePlot("cellbender_prob_to_be_cell", min.cutoff = 0.98, cols = c("red","black"))
+```
+
+```{r}
+#| fig-width: 18
+plot_temp <- (plots[[31]]  + plots[[32]])
+plot_temp |> ggsave(file="test.png",width = 17)
+plot_temp
+```
+
+```{r}
+#| fig-width: 18
+plot_temp <- (plots[[1]]  + plots[[5]])
+plot_temp |> ggsave(file="test.png",width = 17)
+plot_temp
+```
+
+```{r}
+#| fig-width: 18
+plot_temp <- (plots[[2]] + plots[[6]])
+plot_temp |> ggsave(file="test2.png", width = 17)
+plot_temp
+```
+
+```{r}
+#| fig-width: 18
+plot_temp <- (plots[[3]] + plots[[7]])
+plot_temp |> ggsave(file="test3.png", width = 17)
+plot_temp
+```
+
+```{r}
+#| fig-width: 18
+plot_temp <- (plots[[4]] + plots[[8]])
+plot_temp |> ggsave(file="test4.png", width = 17)
+plot_temp
+```
+
+```{r}
+#| fig-width: 18
+#| 
+plots[[9]] <- hub_01_seurat |>
+  DimPlot(group.by = "uncorrected_RNA_clusters_leiden_res0.8", reduction = "umap.RNA", label = T) +
+  theme(legend.position = "none")
+plots[[10]] <- hub_01_seurat |> DimPlot(group.by = "RNA_clusters_leiden_res0.8", reduction = "umap.RNA",label = T) + theme(legend.position = "none")
+plot_temp <- ( plots[[9]]+ plots[[10]])
+plot_temp
+
+```
+
+```{r}
+hub_01_seurat |> ggplot(aes(RNA_clusters_leiden_res0.8,fill=cell_line_doublet_cellranger))+geom_bar()
+
+hub_01_seurat |> ggplot(aes(uncorrected_RNA_clusters_leiden_res0.8,fill=cell_line_doublet_cellranger))+geom_bar()
+```
+
+```{r}
+hub_01_seurat |> ggplot(aes(RNA_clusters_leiden_res0.8,fill=singlet_doublet_cellranger))+geom_bar()
+```
+
+#Median absolute deviations
+
+```{r}
+my_mad <- function(x, constant = 1) {
+    median(abs(x - median(x, na.rm = TRUE)), na.rm = TRUE) * constant
+}
+
+hub_01_seurat[["percent.mt"]] <- PercentageFeatureSet(object = hub_01_seurat, pattern = "^MT-")
+seurat_obj |> VlnPlot("percent.mt")
+mt_mad_tbl <- tibble(percent.mt = hub_01_seurat$percent.mt,
+                     seurat_clusters= hub_01_seurat$seurat_clusters,
+                      cell_line_doublet_cellranger= hub_01_seurat$cell_line_doublet_cellranger)
+
+mt_mad_tbl <- mt_mad_tbl |> group_by(cell_line_doublet_cellranger) |> mutate(MAD_percent_mito =my_mad(x=percent.mt)) |> mutate(dead_by_mad=ifelse(MAD_percent_mito>2.5, "dead","alive"))
+
+mt_mad_tbl |> ggplot(aes(cell_line_doublet_cellranger,percent.mt, colour = dead_by_mad)) +geom_jitter() + theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+mt_mad_tbl |> ggplot(aes(percent.mt, cell_line_doublet_cellranger, fill = dead_by_mad)) + geom_density_ridges()+ theme(axis.text.x = element_text(angle = 45, hjust=1))+ xlim(0,20)
+
+hub_01_seurat$"dead" <- ifelse(pull(hub_01_seurat,percent.mt)>7.5,"dead","alive")
+
+```
+
+```{r}
+plots[[11]] <- hub_01_seurat |> FeaturePlot("percent.mt", reduction = "umap.RNA")
+plots[[11]]
+
+plots[[12]] <- hub_01_seurat |> FeaturePlot("percent.mt", reduction = "umap.uncorrected_RNA")
+plots[[12]]
+```
+
+```{r}
+plots[[12]] <- hub_01_seurat |> DimPlot(group.by = "dead", reduction = "umap.RNA")
+plots[[12]]
+```
+
+#R/panther-go.R
+
+```{r}
+
+```
