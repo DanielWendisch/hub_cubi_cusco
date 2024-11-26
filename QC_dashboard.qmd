@@ -36,7 +36,7 @@ library(stringr)
 dataset_name <- "hub_01"
 #####################################
 
-source(paste0("QC_dashboard_",dataset_name,"_processing", ".R"))
+source(paste0("scripts/", "QC_dashboard_",dataset_name,"_processing", ".R"))
 
 my_mad <- function(x, constant = 1) {
     median(abs(x - median(x, na.rm = TRUE)), na.rm = TRUE) * constant
@@ -171,7 +171,7 @@ selectInput('chosen_genes', "genes", sort(unique(cluster_zscore_data$gene)), mul
 # background correction
 
 ## Row {height="10%"}
-**Intestinal organoids**
+**`{r} dataset_content`**
 &nbsp;
 **`{r} dataset_name` sequencing run**
 
@@ -212,7 +212,7 @@ geom_bar()+
 theme_minimal()
 ```
 ```{r}
-#| title: clusters unocorrected
+#| title: clusters uncorrected
 dim_plots_list[[300]] 
 
 ```
@@ -364,7 +364,7 @@ xlim(0,70000) +
 ### Column {.tabset}
 
 ```{r}
-#| title: filtered mito and RNA treshold
+#| title: filtered by user
 
 
 filtered_seurat_obj <- seurat_obj |>
@@ -396,18 +396,31 @@ seurat_obj |> DimPlot( reduction = "umap.RNA",label = T, group.by = "RNA_cluster
 
 ### column 
 ```{r}
+#| title: "Cluster Tree"
 Idents(seurat_obj) <- "RNA_clusters_leiden_res0.8"
-seurat_obj <- BuildClusterTree(seurat_obj, reduction=pca.RNA, slot="counts" )
-aggregated <- AggregateExpression(seurat_obj,group.by="RNA_clusters_leiden_res0.8",  assays="RNA")
+seurat_obj <- BuildClusterTree(seurat_obj,
+                               reduction=pca.RNA,
+                               slot="counts" )
+aggregated <- AggregateExpression(seurat_obj,
+                                  group.by="RNA_clusters_leiden_res0.8",
+                                  assays="RNA")
 
-PlotClusterTree(seurat_obj, direction = "downwards")
+PlotClusterTree(seurat_obj,
+                direction = "downwards")
 ```
 
-### column 
+### column {.tabset}
 ```{r}
+#| title: "Unfiltered, background corrected"
 Idents(seurat_obj) <- "RNA_clusters_leiden_res0.8"
 DefaultAssay(seurat_obj) <- "RNA"
 DimPlot(seurat_obj, label=T) 
+```
+
+```{r}
+#| title: filtered by user
+
+filtered_seurat_obj |> DimPlot( reduction = "umap.RNA",label = T, group.by = "RNA_clusters_leiden_res0.8")
 ```
 
 ## Row 
@@ -420,13 +433,13 @@ plotOutput('dot_plot')
 ### Column
 
 ```{r}
-#| title: Differantially ecpressed genes
+#| title: Differentially expressed genes
 
 de_genes_tbl <- read_rds("output/QC_cluster_markers_min.pct_0.4_logfc.threshold_0.25_max.cells.per.ident_300.rds") |> select(cluster, gene, p_val, avg_log2FC, pct.1, pct.2, p_val_adj) |> group_by(cluster) |> slice_min(p_val, n=50)
 
 de_genes_tbl |> mutate(cluster=as_factor(cluster)) |>
   relocate(cluster) |> 
-  datatable(
+  DT::datatable(
     colnames = c("cluster ","gene","pval", "avg_log2FC", "pct.1", "pct.2","p_val_adj"),
     filter = 'top',
     options = list(dom = 'tp',
@@ -436,11 +449,14 @@ de_genes_tbl |> mutate(cluster=as_factor(cluster)) |>
       scrollY = TRUE
      )
   ) |> formatSignif(columns=c('p_val', 'avg_log2FC', 'p_val_adj'), digits=4 )
+
+#plotOutput("dot_plot")
 ```
 ```{r}
 #| context: server
 
-dataset <- reactive({cluster_zscore_data |> filter(gene %in% input$chosen_genes)})
+dataset <- reactive({cluster_zscore_data |>
+    filter(gene %in% input$chosen_genes)})
 
 output$dot_plot <- renderPlot({
 
@@ -453,7 +469,9 @@ p <- ggplot(dataset(), aes(x = factor(cluster), y = gene)) +
        y = "Gene",
        size = "Z-score magnitude",
        color = "Z-score")+
-  xlab("cluster")
+  xlab("cluster")+
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14,face="bold"))
   
   
 
