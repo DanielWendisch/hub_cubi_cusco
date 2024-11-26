@@ -2,3 +2,9 @@
 .Rhistory
 .RData
 .Ruserdata
+/BPcell_matrices/
+/output/
+/rsconnect/
+/intermediate_data/
+/QC_dashboard_files/
+/processing_after_qc_files/
