@@ -1,4 +1,4 @@
-![workflow](workflow.png)
+![workflow](workflow.PNG)
 # hub_cubi_cusco
 
 ##meta_data
