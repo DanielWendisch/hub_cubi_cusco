@@ -1,0 +1,52 @@
+---
+title: "Case Study - Intestinal Organoid Differentiation Assessment"
+format: html
+editor: visual
+---
+
+```{r}
+library(Seurat)
+library(tidyverse)
+library(tidyseurat)
+library(readxl)
+library(janitor)
+library(patchwork)
+library(here)
+```
+
+
+```{r}
+dataset_name <- "hub_01"
+path_raw_data_file <-  here("..\\..\\raw_data\\cubi_cusco")
+
+
+obj <- read_rds(paste0("../","intermediate_data/", dataset_name, "_integrated_", ".rds"))
+DimPlot(obj, reduction = "umap.mnn")
+```
+
+```{r}
+#HHEX: anterior-like definitive endoderm
+#CDX2:hindgut
+#PDX1 & Albumin : foregut
+#FOXF1: Mesoderm
+#Brachyury (TBXT): Mesoderm
+#FOXA2/SOX17 : Definitive Endoderm
+
+
+remove_legend <- function(plot) {
+  plot + theme(legend.position = "none")
+}
+
+differentiation_markers_1 <- c("HHEX", "CDX2", "PDX1", "FOXF1", "TBXT", "FOXA2", "SOX17")
+plot_differentiation_markers_1 <- FeaturePlot(obj, reduction = "umap.mnn", features = differentiation_markers, combine=F ) 
+
+differentiation_markers_1 <- c("VIM", "")
+plot_differentiation_markers_1 <- FeaturePlot(obj, reduction = "umap.mnn", features = differentiation_markers, combine=F ) 
+
+plot_differentiation_markers
+```
+
+```{r}
+
+```
+
