@@ -6,4 +6,5 @@
 ###adjusted feature_call column from cellranger multi
 ### cell_line_doublet_cellranger --- like singlet_doublet_cellranger but with cell line names
 
-![(workflow.png)
+![](workflow.png)
+
