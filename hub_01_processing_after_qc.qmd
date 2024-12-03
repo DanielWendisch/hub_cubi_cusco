@@ -3,10 +3,12 @@ title: "hub_01_processing_after_qc"
 format:
   html:
     embed-resources: true
+    code-fold: true
 editor: visual
+output_dir: "docs"
 ---
 
-```{r}
+```{r message=FALSE}
 library(tidyverse)
 library(Seurat)
 library(tidyseurat)
@@ -26,7 +28,7 @@ subfilter_by <- "hIO_BIHi250-A"
 
 ```
 
-```{r}
+```{r message=FALSE}
 if (recalculate_1) {
   # basic seurat processing for each assay
 ###--------------------------------------------------------------------------------------------
@@ -70,30 +72,30 @@ for (assay_it in Assays(seurat_obj)) {
 }
 ```
 
-```{r}
+```{r message=FALSE}
 seurat_obj <- read_rds(file = paste0("intermediate_data/",dataset_name,"_filtered_seurat_obj_processed.rds" ))
 
 DefaultAssay(seurat_obj) <- "RNA"
-seurat_obj
+
 ```
 
-```{r}
+```{r message=FALSE}
 seurat_obj |> DimPlot(label = T)
 seurat_obj |> DimPlot(group.by = "cell_line_doublet_cellranger", split.by ="cell_line_doublet_cellranger" )
 seurat_obj |> DimPlot(group.by = "cell_line_doublet_cellranger" )
 ```
 
-```{r}
+```{r message=FALSE}
 markers_left <- seurat_obj |> FindMarkers(ident.1=c(5,6,7,8,10,15,4,14))
 
-markers_left |> filter(avg_log2FC<0) 
-markers_left |> filter(avg_log2FC>0)
+markers_left |> filter(avg_log2FC<0) |> head()
+markers_left |> filter(avg_log2FC>0) |> head()
 
 
 FeaturePlot(seurat_obj, c("KRT8","SOX2-OT"))
 ```
 
-```{r}
+```{r message=FALSE}
 s.genes <- cc.genes$s.genes |> str_to_title()
 g2m.genes <- cc.genes$g2m.genes|> str_to_title()
 
@@ -102,7 +104,7 @@ seurat_obj<- CellCycleScoring(seurat_obj, s.features = s.genes, g2m.features = g
 DimPlot(seurat_obj, group.by = "Phase")
 ```
 
-```{r}
+```{r message=FALSE}
 Idents(seurat_obj) <- "cell_line_cellranger"
 
 markers_cell_line<- FindAllMarkers(seurat_obj,  group.by ="cell_line_cellranger" ,only.pos = T) |> as_tibble()
@@ -123,13 +125,13 @@ markers_cell_line |> mutate(cluster=as_factor(cluster)) |>
   ) |> formatSignif(columns=c('p_val', 'avg_log2FC', 'p_val_adj'), digits=4 )
 ```
 
-```{r}
+```{r message=FALSE}
 seurat_obj |> FeaturePlot("XIST")
 seurat_obj |> VlnPlot("XIST")
 
 ```
 
-```{r}
+```{r message=FALSE}
 Idents(seurat_obj) <- "RNA_clusters_leiden_res0.8"
 clusters_7<- FindMarkers(seurat_obj, ident.1 = 7) |> as_tibble(rownames="gene")
 clusters_9<- FindMarkers(seurat_obj, ident.1 = 9) |> as_tibble(rownames="gene")
@@ -139,7 +141,7 @@ cluster_9_markers <-  clusters_9 |> slice_min(p_val, n = 30) |> pull(gene)
 paste(cluster_9_markers, collapse = ", ")
 ```
 
-```{r}
+```{r message=FALSE}
 variable_features_vec <- VariableFeatures(seurat_obj) |> paste( collapse = ", ")
 tibble(genes= variable_features_vec)|> write_csv(file = paste0("output\\variable_genes_",dataset_name,".csv"))
 
@@ -150,7 +152,7 @@ yu_gramp_Cell_2021_tHIO <- read_excel("../../raw_data/cubi_cusco/genesets_from_l
 
 # module score function
 
-```{r}
+```{r message=FALSE}
 add_named_module_score <- function(seurat_object,named_gene_list){
 
 seurat_obj <- AddModuleScore(seurat_obj, features=named_gene_list, name = "m.s.")
@@ -177,7 +179,7 @@ names(vector_list) <-    paste0("t_hio__",names(vector_list)  )
 seurat_obj<- add_named_module_score(seurat_obj,vector_list)
 ```
 
-```{r}
+```{r message=FALSE}
 # vector_list <- yu_gramp_Cell_2021_tHIO %>%
 #   group_by(group) %>%
 #   summarise(value_vector = list(feature)) %>%
@@ -193,7 +195,7 @@ seurat_obj<- add_named_module_score(seurat_obj,vector_list)
 # names(seurat_obj@meta.data) <- str_replace_all(names(seurat_obj@meta.data),names_vec)
 ```
 
-```{r}
+```{r message=FALSE}
 #| label: sd
 #| fig-width: 12
 #| fig-height: 9
@@ -208,8 +210,8 @@ p4 <- VlnPlot(seurat_obj, names(seurat_obj@meta.data)[15:29], pt.size = 0) |> la
 p4 |> patchwork::wrap_plots()
 ```
 
-```{r}
-#| label: module scores umap
+```{r message=FALSE}
+#| label: module scores umap 2
 #| fig-width: 15
 #| fig-height: 9
 
@@ -217,11 +219,11 @@ mod_score_umap <- FeaturePlot(seurat_obj, names(seurat_obj@meta.data)[15:29], )|
 ggarrange(plotlist = mod_score_umap)
 ```
 
-```{r}
+```{r message=FALSE}
 seurat_subset <- seurat_obj |> filter(cell_line_cellranger==subfilter_by)
 ```
 
-```{r}
+```{r message=FALSE}
 
 if(recalculate_2){
   # basic seurat processing for each assay
@@ -267,7 +269,7 @@ for (assay_it in Assays(seurat_subset)) {
 
 ```
 
-```{r}
+```{r message=FALSE}
 seurat_subset <- read_rds(file = paste0("intermediate_data/",dataset_name,"_",subfilter_by,"_filtered_seurat_obj_processed.rds" ))
 
 DefaultAssay(seurat_subset) <-"RNA" 
@@ -278,7 +280,7 @@ seurat_subset |> DimPlot(reduction ="pca.RNA" ,dims = c(3,4))
 seurat_subset |> DimPlot(reduction ="pca.RNA" ,dims = c(4,5))
 ```
 
-```{r}
+```{r message=FALSE}
 seurat_subset |> FeaturePlot( "nCount_RNA" )
 seurat_subset |> FeaturePlot( "percent_mito" )
 seurat_subset|> FeaturePlot( "nFeature_RNA" )
@@ -286,14 +288,14 @@ seurat_subset|> FeaturePlot( "nFeature_RNA" )
 
 ```
 
-```{r}
+```{r message=FALSE}
 seurat_subset_markers <- FindAllMarkers(seurat_subset) |> as_tibble()
 seurat_subset_markers |> group_by(cluster) |> slice_min(p_val, n=10)
 seurat_subset_markers |> filter(cluster==4, avg_log2FC>0) |> arrange(p_val) |> slice_min(p_val, n=30) |> pull(gene) |> 
   paste(collapse = ", ")
 ```
 
-```{r}
+```{r message=FALSE}
 #| label: module scores umap
 #| fig-width: 15
 #| fig-height: 9
@@ -302,7 +304,7 @@ dings2 <- FeaturePlot(seurat_subset, names(seurat_subset@meta.data)[15:29], ) |>
 ggarrange(plotlist = dings2)
 ```
 
-```{r}
+```{r message=FALSE}
 #| label: module scores vln
 #| fig-width: 15
 #| fig-height: 9
@@ -311,6 +313,4 @@ dings3 <- VlnPlot(seurat_subset, names(seurat_subset@meta.data)[15:29], pt.size 
 ggarrange(plotlist = dings3)
 ```
 
-```{r}
 
-```
