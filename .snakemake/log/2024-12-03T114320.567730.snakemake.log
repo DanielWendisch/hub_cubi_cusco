@@ -1,0 +1,36 @@
+host: DESKTOP-ADLEJL2
+Building DAG of jobs...
+Creating conda environment envs/QC_dashboard_environment.yaml...
+Downloading and installing remote packages.
+CreateCondaEnvironmentException:
+Could not create conda environment from /mnt/c/Users/Danne/R_projects/hub_cubi_cusco/envs/QC_dashboard_environment.yaml:
+Command:
+conda env create --quiet --no-default-packages --file "/mnt/c/Users/Danne/R_projects/hub_cubi_cusco/.snakemake/conda/a52584606d815f718c73de1a0726fd44_.yaml" --prefix "/mnt/c/Users/Danne/R_projects/hub_cubi_cusco/.snakemake/conda/a52584606d815f718c73de1a0726fd44_"
+Output:
+/home/dannux/miniforge3/lib/python3.12/argparse.py:2006: FutureWarning: `remote_definition` is deprecated and will be removed in 25.9. Use `conda env create --file=URL` instead.
+  action(self, namespace, argument_values, option_string)
+Channels:
+ - conda-forge
+ - bioconda
+Platform: linux-64
+Collecting package metadata (repodata.json): ...working... done
+Solving environment: ...working... failed
+
+PackagesNotFoundError: The following packages are not available from current channels:
+
+  - r-bpcells
+
+Current channels:
+
+  - https://conda.anaconda.org/conda-forge
+  - https://conda.anaconda.org/bioconda
+
+To search for alternate channels that may provide the conda package you're
+looking for, navigate to
+
+    https://anaconda.org
+
+and use the search bar at the top of the page.
+
+
+

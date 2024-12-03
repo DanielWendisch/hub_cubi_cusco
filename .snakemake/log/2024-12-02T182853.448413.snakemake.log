@@ -1,0 +1,29 @@
+host: DESKTOP-ADLEJL2
+Building DAG of jobs...
+Creating conda environment envs/QC_dashboard_environment.yaml...
+Downloading and installing remote packages.
+CreateCondaEnvironmentException:
+Could not create conda environment from /mnt/c/Users/Danne/R_projects/hub_cubi_cusco/envs/QC_dashboard_environment.yaml:
+Command:
+conda env create --quiet --no-default-packages --file "/mnt/c/Users/Danne/R_projects/hub_cubi_cusco/.snakemake/conda/a6ae9100114b51df175b6e4500ba8286_.yaml" --prefix "/mnt/c/Users/Danne/R_projects/hub_cubi_cusco/.snakemake/conda/a6ae9100114b51df175b6e4500ba8286_"
+Output:
+/home/dannux/miniforge3/lib/python3.12/argparse.py:2006: FutureWarning: `remote_definition` is deprecated and will be removed in 25.9. Use `conda env create --file=URL` instead.
+  action(self, namespace, argument_values, option_string)
+Channels:
+ - conda-forge
+ - bioconda
+ - defaults
+ - nodefaults
+Platform: linux-64
+Collecting package metadata (repodata.json): ...working... failed
+
+UnavailableInvalidChannel: HTTP 403 FORBIDDEN for channel pkgs/main <https://repo.anaconda.com/pkgs/main>
+
+The channel is not accessible or is invalid.
+
+You will need to adjust your conda configuration to proceed.
+Use `conda config --show channels` to view your configuration's current state,
+and use `conda config --show-sources` to view config file locations.
+
+
+

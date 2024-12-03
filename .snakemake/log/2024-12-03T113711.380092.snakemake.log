@@ -1,0 +1,74 @@
+host: DESKTOP-ADLEJL2
+Building DAG of jobs...
+Using shell: /usr/bin/bash
+Provided cores: 8
+Rules claiming more threads will be scaled down.
+Conda environments: ignored
+Job stats:
+job           count
+----------  -------
+all               1
+render_qmd        2
+total             3
+
+Select jobs to execute...
+Execute 2 jobs...
+
+[Tue Dec  3 11:37:11 2024]
+localrule render_qmd:
+    input: QC_dashboard.qmd
+    output: QC_dashboard_hub_02.html
+    jobid: 2
+    reason: Missing output files: QC_dashboard_hub_02.html
+    wildcards: dataset=hub_02
+    resources: tmpdir=/tmp
+
+
+[Tue Dec  3 11:37:11 2024]
+localrule render_qmd:
+    input: QC_dashboard.qmd
+    output: QC_dashboard_hub_01.html
+    jobid: 1
+    reason: Missing output files: QC_dashboard_hub_01.html
+    wildcards: dataset=hub_01
+    resources: tmpdir=/tmp
+
+[Tue Dec  3 11:37:17 2024]
+[Tue Dec  3 11:37:17 2024]
+Error in rule render_qmd:
+    jobid: 1
+    input: QC_dashboard.qmd
+    output: QC_dashboard_hub_01.html
+    conda-env: /mnt/c/Users/Danne/R_projects/hub_cubi_cusco/.snakemake/conda/6da4656541d5c54a446228a69238af66_
+    shell:
+        
+        Rscript -e "library(quarto);
+        quarto_render(
+          input = 'QC_dashboard.qmd',
+          output_file = 'QC_dashboard_hub_01.html',
+          execute_params = list(dataset_name = 'hub_01')
+        )"
+        
+        (one of the commands exited with non-zero exit code; note that snakemake uses bash strict mode!)
+
+Error in rule render_qmd:
+    jobid: 2
+    input: QC_dashboard.qmd
+    output: QC_dashboard_hub_02.html
+    conda-env: /mnt/c/Users/Danne/R_projects/hub_cubi_cusco/.snakemake/conda/6da4656541d5c54a446228a69238af66_
+    shell:
+        
+        Rscript -e "library(quarto);
+        quarto_render(
+          input = 'QC_dashboard.qmd',
+          output_file = 'QC_dashboard_hub_02.html',
+          execute_params = list(dataset_name = 'hub_02')
+        )"
+        
+        (one of the commands exited with non-zero exit code; note that snakemake uses bash strict mode!)
+
+Shutting down, this might take some time.
+Exiting because a job execution failed. Look above for error message
+Complete log: .snakemake/log/2024-12-03T113711.380092.snakemake.log
+WorkflowError:
+At least one job did not complete successfully.

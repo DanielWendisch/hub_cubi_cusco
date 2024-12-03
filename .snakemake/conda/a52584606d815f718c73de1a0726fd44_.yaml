@@ -1,0 +1,20 @@
+name: r_environment
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - r-base=4.3.1  # You can specify a version of R if necessary
+  - r-readr
+  - r-dplyr
+  - r-tidyr
+  - r-ggplot2
+  - r-seurat
+  - r-tidyseurat
+  - r-bpcells
+  - r-ggridges
+  - r-forcats
+  - r-dt
+  - r-shiny
+  - r-stringr
+  - r-quarto

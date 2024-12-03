@@ -1,0 +1,24 @@
+name: r_environment
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - r-base=4.3.1  # You can specify a version of R if necessary
+  - r-seurat
+  - r-tidyverse
+  - r-tidyseurat
+  - r-bayesprism
+  - r-readxl
+  - r-janitor
+  - r-patchwork
+  - r-instaprism
+  - r-music
+  - r-toast
+  - r-summarizedexperiment
+  - r-singlecellexperiment
+  - r-tidysinglecellexperiment
+  - r-here
+  - r-rcurl  # This might be necessary for some packages like biomaRt if you're planning to use it in the future
+  - r-biomaRt  # If you need biomaRt
+  - quarto-cli
