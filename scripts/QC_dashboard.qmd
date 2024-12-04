@@ -1,0 +1,482 @@
+---
+title: "QC organoid scRNA-Seq"
+format: 
+  dashboard:
+    orientation: rows
+  html:
+    embed-resources: true
+server: shiny
+
+---
+
+```{r setup}
+#| warning: false
+#| echo: false
+#| context: setup
+
+library(readr)
+library(dplyr)
+library(tidyr)
+#library(purrr)
+#library(magrittr)
+library(ggplot2)
+library(Seurat)
+library(tidyseurat)
+library(BPCells)
+#library(Azimuth)
+#library(stringr)
+library(ggridges)
+library(forcats)
+library(DT)
+library(shiny)
+library(stringr)
+
+########################################
+#adjust dataset here
+dataset_name <- "hub_01"
+#####################################
+
+source(paste0("scripts/", "QC_dashboard_",dataset_name,"_processing", ".R"))
+
+my_mad <- function(x, constant = 1) {
+    median(abs(x - median(x, na.rm = TRUE)), na.rm = TRUE) * constant
+}
+
+
+theme_1 <-   theme( plot.title = element_text(hjust = 0.5),
+  plot.subtitle = element_text(hjust = 0.5))
+
+
+
+dim_plots_list <- list()
+for (i in 1:nrow(plot_specs)) {
+  DefaultAssay(seurat_obj) <- plot_specs$default_assay[i]
+  
+  
+  dim_plots_list[[plot_specs$list_int[i]]] <- seurat_obj |>
+  DimPlot(group.by = plot_specs$meta_data_column[i], order = plot_specs$order[[i]][1])  + 
+  theme_1+
+  ggtitle(label=plot_specs$plote_title[i], subtitle = plot_specs$subtitle[i])
+  
+}
+
+
+
+DefaultAssay(seurat_obj) <- "RNA"
+feature_plots <- list()
+feature_plots[[1]] <- seurat_obj |> 
+  FeaturePlot("cellbender_prob_to_be_cell", min.cutoff = 0.98, cols = c("red","black"))+
+  theme_1+
+  ggtitle(label="probability to be cell (cellbender)",
+          subtitle = "background corrected counts)")
+
+
+DefaultAssay(seurat_obj) <- "uncorrected_RNA"
+feature_plots[[21]] <- seurat_obj |> 
+  FeaturePlot("cellbender_prob_to_be_cell", min.cutoff = 0.98, cols = c("red","black"))+
+  theme_1+
+  ggtitle(label="probability to be cell (cellbender)",
+          subtitle = "background corrected counts (cellbender)")
+
+
+######-------------------------------
+
+seurat_obj[["percent_mito"]] <- PercentageFeatureSet(object = seurat_obj, pattern = "^MT-")
+
+mt_mad_tbl <- tibble(percent_mito = seurat_obj$percent_mito,
+                     seurat_clusters= seurat_obj$seurat_clusters,
+                      cell_line_doublet_cellranger= seurat_obj$cell_line_doublet_cellranger)
+
+
+
+mt_mad_tbl <- mt_mad_tbl |> group_by(cell_line_doublet_cellranger) |> mutate(MAD_percent_mito =my_mad(x=percent_mito)) |> mutate(dead_by_mad=ifelse(MAD_percent_mito>upper_mito_thresh, "dead","alive"))
+
+seurat_obj$"dead" <- ifelse(pull(seurat_obj,percent_mito)>upper_mito_thresh,"dead","alive")
+
+
+
+
+#Shiny
+#####
+# exp_data <- AggregateExpression(object =seurat_obj ,features =VariableFeatures(seurat_obj),group.by = "RNA_clusters_leiden_res0.8", assays = "RNA"  )
+# exp_data <- as_tibble(t(exp_data[[1]]), rownames = "gene")
+# 
+# umap_centers <- as_tibble(seurat_obj@reductions$umap.RNA@cell.embeddings, rownames="gene") |>
+#   mutate(cluster= seurat_obj$RNA_clusters_leiden_res0.8) |> group_by(cluster) |> 
+#   summarize(center_umap_1=mean(umapRNA_1),
+#          center_umap_2=mean(umapRNA_2))
+#   
+#   
+
+
+
+# Calculate average expression for each gene in each cluster
+avg_exp <- AggregateExpression(object =seurat_obj ,features =VariableFeatures(seurat_obj),group.by = "RNA_clusters_leiden_res0.8", assays = "RNA"  )[[1]] #|> as_tibble(rownames="gene")
+
+
+# Function to compute z-scores
+compute_z_score <- function(x) {
+  (x - mean(x)) / sd(x)
+}
+
+# Apply z-score computation
+avg_exp_z <- as.data.frame(t(apply(avg_exp, 1, compute_z_score)))
+
+# Add gene names as a column for plotting
+avg_exp_z$gene <- rownames(avg_exp_z)
+avg_exp_z <- avg_exp_z %>% gather(key = "cluster", value = "z_score", -gene)
+
+
+# Create the dot plot
+cluster_zscore_data <- as_tibble(avg_exp_z) 
+# Create the dot plot
+cluster_zscore_data <- as_tibble(avg_exp_z) |> mutate(cluster=str_replace_all(cluster,"g","") |> as.double())
+``` 
+
+
+
+
+#  {.sidebar}
+
+**Thresholds applied to library:**
+
+  |                     | *lower*                              | *upper*                                    |
+  |-----------------|------------------------|--------------------------------|
+  | **nCount quantile** | `{r} lower_nCount_RNA_thresh_quantile` | `{r} upper_nCount_RNA_thresh_quantile`   |
+  | **nCount RNA**      | `{r} lower_nCount_RNA_thresh`          | `{r} upper_nCount_RNA_thresh` |
+  &nbsp;
+  &nbsp;
+  
+  |                         | *lower* | *upper*                        |
+  |-------------------------|-----------|----------------------------------|
+  | **% mito. genes** | none      | `{r} upper_mito_thresh`          |
+  &nbsp;
+  &nbsp;
+  
+  |                      |                        |
+  |----------------------|------------------------|
+  | **deleted clusters** | `{r} deleted_clusters` |
+  
+&nbsp;
+&nbsp;
+&nbsp;
+&nbsp;
+
+**Select for dotplot**
+```{r}
+selectInput('chosen_genes', "genes", sort(unique(cluster_zscore_data$gene)), multiple = TRUE) 
+
+```
+
+# background correction
+
+## Row {height="10%"}
+**`{r} dataset_content`**
+&nbsp;
+**`{r} dataset_name` sequencing run**
+
+## Row 
+
+### Column {.tabset}
+
+```{r}
+#| title: clusters
+dim_plots_list[[100]]
+
+```
+
+```{r}
+#| title: cell line
+dim_plots_list[[3]]
+
+```
+
+```{r}
+#| title: doublets & empty droplets
+dim_plots_list[[2]]
+
+```
+
+
+```{r}
+#| title: cell probability
+feature_plots[[1]] 
+
+```
+
+```{r}
+#| title: cluster sizes corrected
+
+seurat_obj |> ggplot(aes(RNA_clusters_leiden_res0.8,fill=cell_line_doublet_cellranger))+
+geom_bar()+
+theme_minimal()
+```
+```{r}
+#| title: clusters uncorrected
+dim_plots_list[[300]] 
+
+```
+
+### Column {.tabset}
+
+```{r}
+#| title: clusters
+dim_plots_list[[200]]
+
+```
+
+```{r}
+#| title: cell line
+dim_plots_list[[23]]
+
+```
+
+```{r}
+#| title: doublets & empty droplets
+dim_plots_list[[22]]
+
+```
+
+
+```{r}
+#| title: cell probability
+feature_plots[[21]] 
+
+```
+
+```{r}
+#| title: cluster sizes uncorrected
+
+seurat_obj |> ggplot(aes(uncorrected_RNA_clusters_leiden_res0.8,fill=cell_line_doublet_cellranger))+geom_bar() +theme_minimal()
+
+```
+# QC metrics, after background correction
+## Row {height="50%"}
+### Dimplots {.tabset}
+```{r}
+#| title: exceeding mito %
+DefaultAssay(seurat_obj) <- "RNA"
+seurat_obj |> DimPlot(group.by = "dead", reduction = "umap.RNA")
+```
+```{r}
+#| title: freq. mito, corrected
+DefaultAssay(seurat_obj) <- "RNA"
+seurat_obj |> FeaturePlot("percent_mito", reduction = "umap.RNA", max.cutoff= 10) + ggtitle("percent mitochondrial reads, with backgr. correc.")
+```
+```{r}
+#| title: freq. mito, uncorrected
+DefaultAssay(seurat_obj) <- "uncorrected_RNA"
+seurat_obj |> FeaturePlot("percent_mito", reduction = "umap.RNA", max.cutoff= 10) + ggtitle("percent mitochondrial reads, without backgr. correc.")
+```
+
+### Column {.tabset}
+
+
+```{r}
+#| title: counts vs features per cell
+
+multiplet_n_count_RNA_n_Feature<- seurat_obj |>
+ggplot(aes(nCount_RNA, nFeature_RNA, color=singlet_doublet_cellranger)) +  
+  geom_point(size=0.5) +
+  theme_bw() +
+  #xlim(c(-100,70000)) +
+  #ylim(c(-1000,8000)) +
+  #scale_color_manual(values = c( "grey","red","green"))  +  
+  geom_vline(aes(xintercept = lower_nCount_RNA_thresh),linetype = "dashed")+    geom_vline(aes(xintercept = upper_nCount_RNA_thresh),linetype = "dashed")+
+guides(colour = guide_legend(override.aes = list(size=7)))+
+  scale_x_continuous(breaks = seq(0, 150000, by = 5000))+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+ggExtra::ggMarginal(multiplet_n_count_RNA_n_Feature +theme(legend.position = "bottom") , type = "density", groupColour = TRUE, groupFill = TRUE,size = 3) 
+
+```
+
+```{r}
+#| title: doublet quantile freq
+
+seurat_obj |> mutate(quantile_nCount_RNA = ntile(nCount_RNA,100)) |>  # Create groups in steps of 1000
+  group_by(quantile_nCount_RNA,singlet_doublet_cellranger) |> 
+  summarise(n = n(), .groups = 'drop', min_nCount_RNA=min(nCount_RNA)) |> 
+  group_by(quantile_nCount_RNA) |> 
+  mutate(freq=n/sum(n)) |> 
+  ggplot(aes(min_nCount_RNA,freq,color=singlet_doublet_cellranger)) +
+  geom_point()+
+  geom_smooth()+
+  geom_hline(yintercept = 0.1, color = "red", linetype = "dashed", size = 1)+
+  geom_hline(yintercept = 0.9, color = "red", linetype = "dashed", size = 1)+
+  geom_vline(xintercept = lower_nCount_RNA_thresh, color = "black", linetype = "dashed", size = 1)+
+  geom_vline(xintercept = upper_nCount_RNA_thresh, color = "black", linetype = "dashed", size = 1)+
+  scale_x_continuous(breaks = seq(0, max(seurat_obj$nCount_RNA, na.rm = TRUE), by = 2000))+
+theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+```
+
+## Row {height="50%"}
+
+
+
+
+
+### VlnPlots {.tabset}
+
+
+
+
+```{r}
+#| title: freq. mito, Violin plot, corrected
+
+DefaultAssay(seurat_obj) <- "RNA"
+seurat_obj |> VlnPlot("percent_mito")
+```
+```{r}
+#| title: nCountRNA Violin, corrected
+
+DefaultAssay(seurat_obj) <- "RNA"
+seurat_obj |> VlnPlot("nCount_RNA")
+```
+
+
+
+```{r}
+#| title: mito density by cellline
+mt_mad_tbl |> ggplot(aes(percent_mito, cell_line_doublet_cellranger, fill = dead_by_mad)) + geom_density_ridges()+ theme(axis.text.x = element_text(angle = 45, hjust=1)) +
+  xlim(0,20)+
+  theme_minimal()
+```
+
+```{r}
+#| title: nCountRNA histograms
+
+
+seurat_obj |> ggplot(aes(nCount_uncorrected_RNA,  fill = cell_line_doublet_cellranger))  +
+  geom_histogram(bins = 200)+
+  theme(axis.text.x = element_text(angle = 45, hjust=1))+
+  facet_wrap(~cell_line_doublet_cellranger,ncol = 1 )+
+  scale_x_continuous(breaks = seq(0, max(seurat_obj$nCount_RNA, na.rm = TRUE), by = 5000))+
+xlim(0,70000) +
+  theme_minimal()
+
+
+```
+
+### Column {.tabset}
+
+```{r}
+#| title: filtered by user
+
+
+filtered_seurat_obj <- seurat_obj |>
+  filter(
+    !(RNA_clusters_leiden_res0.8 %in% deleted_clusters) &
+      nCount_RNA < upper_nCount_RNA_thresh &
+      nCount_RNA > lower_nCount_RNA_thresh &
+      percent_mito < upper_mito_thresh &
+      singlet_doublet_cellranger == "singlet" & 
+      cellbender_prob_to_be_cell> 0.99) 
+    
+write_rds(filtered_seurat_obj,
+          paste0("intermediate_data\\",dataset_name,"_filtered_seurat_obj.rds") )
+
+filtered_seurat_obj |> DimPlot( reduction = "umap.RNA",label = T, group.by = "RNA_clusters_leiden_res0.8")
+
+```
+
+```{r}
+#| title: not filtered
+
+seurat_obj |> DimPlot( reduction = "umap.RNA",label = T, group.by = "RNA_clusters_leiden_res0.8")
+
+```
+
+# gene level
+
+## Row {height="40%"}
+
+### column 
+```{r}
+#| title: "Cluster Tree"
+Idents(seurat_obj) <- "RNA_clusters_leiden_res0.8"
+seurat_obj <- BuildClusterTree(seurat_obj,
+                               reduction=pca.RNA,
+                               slot="counts" )
+aggregated <- AggregateExpression(seurat_obj,
+                                  group.by="RNA_clusters_leiden_res0.8",
+                                  assays="RNA")
+
+PlotClusterTree(seurat_obj,
+                direction = "downwards")
+```
+
+### column {.tabset}
+```{r}
+#| title: "Unfiltered, background corrected"
+Idents(seurat_obj) <- "RNA_clusters_leiden_res0.8"
+DefaultAssay(seurat_obj) <- "RNA"
+DimPlot(seurat_obj, label=T) 
+```
+
+```{r}
+#| title: filtered by user
+
+filtered_seurat_obj |> DimPlot( reduction = "umap.RNA",label = T, group.by = "RNA_clusters_leiden_res0.8")
+```
+
+## Row 
+
+### Column
+```{r}
+plotOutput('dot_plot')
+```
+
+### Column
+
+```{r}
+#| title: Differentially expressed genes
+
+de_genes_tbl <- read_rds("output/QC_cluster_markers_min.pct_0.4_logfc.threshold_0.25_max.cells.per.ident_300.rds") |> select(cluster, gene, p_val, avg_log2FC, pct.1, pct.2, p_val_adj) |> group_by(cluster) |> slice_min(p_val, n=50)
+
+de_genes_tbl |> mutate(cluster=as_factor(cluster)) |>
+  relocate(cluster) |> 
+  DT::datatable(
+    colnames = c("cluster ","gene","pval", "avg_log2FC", "pct.1", "pct.2","p_val_adj"),
+    filter = 'top',
+    options = list(dom = 'tp',
+     paging = TRUE,
+    #   lengthMenu = c(5, 10, 25),
+    #   pageLength = 10, 
+      scrollY = TRUE
+     )
+  ) |> formatSignif(columns=c('p_val', 'avg_log2FC', 'p_val_adj'), digits=4 )
+
+#plotOutput("dot_plot")
+```
+```{r}
+#| context: server
+
+dataset <- reactive({cluster_zscore_data |>
+    filter(gene %in% input$chosen_genes)})
+
+output$dot_plot <- renderPlot({
+
+p <- ggplot(dataset(), aes(x = factor(cluster), y = gene)) +
+  geom_point(aes(size = abs(z_score), color = z_score)) +
+  scale_color_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme_minimal() +
+  labs(title = "Z-score Dot Plot of Average Gene Expression",
+       x = "Cluster",
+       y = "Gene",
+       size = "Z-score magnitude",
+       color = "Z-score")+
+  xlab("cluster")+
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14,face="bold"))
+  
+  
+
+p
+})
+
+
+```

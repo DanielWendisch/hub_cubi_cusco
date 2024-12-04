@@ -1,0 +1,317 @@
+---
+title: "hub_01_processing_after_qc"
+format:
+  html:
+    embed-resources: true
+    code-fold: true
+editor: visual
+output_dir: "docs"
+---
+
+```{r message=FALSE}
+library(tidyverse)
+library(Seurat)
+library(tidyseurat)
+library(readxl)
+library(janitor)
+library(ggpubr)
+library(BayesPrism)
+library(ggpubr)
+library(DT)
+
+dataset_name <- "hub_01"
+dataset_name <- "hub_02"
+recalculate_1 <- FALSE # seurat object processing combined object
+recalculate_2 <- FALSE # seurat object processing sub object
+
+seurat_obj <- read_rds(paste0("intermediate_data\\",dataset_name,"_filtered_seurat_obj.rds") )
+subfilter_by <- "hIO_BIHi250-A"
+
+```
+
+```{r message=FALSE}
+if (recalculate_1) {
+  # basic seurat processing for each assay
+###--------------------------------------------------------------------------------------------
+for (assay_it in Assays(seurat_obj)) {
+  DefaultAssay(seurat_obj) <- assay_it
+  seurat_obj <- seurat_obj |> 
+    NormalizeData() 
+  
+  seurat_obj <- seurat_obj |>
+    FindVariableFeatures(assay = assay_it) |> 
+    ScaleData() 
+  print("runPCA")
+  seurat_obj <- seurat_obj |>
+    RunPCA(assay = assay_it,reduction.name = paste0("pca.",assay_it)) 
+  print("neighbors")
+  seurat_obj <- seurat_obj |> FindNeighbors(dims = 1:30,
+                                                  reduction = paste0("pca.",assay_it),
+                                                  assay = assay_it) 
+  
+  print("clusters")
+  seurat_obj <- seurat_obj |>  FindClusters(
+    resolution = 0.8,
+    verbose = FALSE,
+    cluster.name =paste0(assay_it, "_clusters_leiden_res0.8"),algorithm=4
+    #graph.name = paste0("kNN_","pca.",assay_it)
+  ) 
+  
+  seurat_obj <- seurat_obj |>
+    RunUMAP(dims = 1:30, reduction = paste0("pca.",assay_it),
+            assay = assay_it,
+            reduction.name =paste0("umap.",assay_it) )
+  
+  gc()
+  
+
+
+  }
+###-----------------------------------------------------------------------------------
+  write_rds(seurat_obj, file = paste0("intermediate_data/",dataset_name,"_filtered_seurat_obj_processed.rds" ))
+  
+}
+```
+
+```{r message=FALSE}
+seurat_obj <- read_rds(file = paste0("intermediate_data/",dataset_name,"_filtered_seurat_obj_processed.rds" ))
+
+DefaultAssay(seurat_obj) <- "RNA"
+
+```
+
+```{r message=FALSE}
+seurat_obj |> DimPlot(label = T)
+seurat_obj |> DimPlot(group.by = "cell_line_doublet_cellranger", split.by ="cell_line_doublet_cellranger" )
+seurat_obj |> DimPlot(group.by = "cell_line_doublet_cellranger" )
+```
+
+```{r message=FALSE}
+markers_left <- seurat_obj |> FindMarkers(ident.1=c(5,6,7,8,10,15,4,14))
+
+markers_left |> filter(avg_log2FC<0) |> head()
+markers_left |> filter(avg_log2FC>0) |> head()
+
+
+FeaturePlot(seurat_obj, c("KRT8","SOX2-OT"))
+```
+
+```{r message=FALSE}
+s.genes <- cc.genes$s.genes |> str_to_title()
+g2m.genes <- cc.genes$g2m.genes|> str_to_title()
+
+seurat_obj<- CellCycleScoring(seurat_obj, s.features = s.genes, g2m.features = g2m.genes)
+
+DimPlot(seurat_obj, group.by = "Phase")
+```
+
+```{r message=FALSE}
+Idents(seurat_obj) <- "cell_line_cellranger"
+
+markers_cell_line<- FindAllMarkers(seurat_obj,  group.by ="cell_line_cellranger" ,only.pos = T) |> as_tibble()
+
+#markers_cell_line |> filter(cluster=="EC_BIHi005-A")
+
+markers_cell_line |> mutate(cluster=as_factor(cluster)) |>
+  relocate(cluster, gene) |> 
+  DT::datatable(
+    colnames = c("cluster", "gene","p_val ","avg_log2FC", "pct.1", "pct.2", "p_val_adj"),
+    filter = 'top',
+    options = list(dom = 'tp',
+     paging = TRUE,
+    #   lengthMenu = c(5, 10, 25),
+    #   pageLength = 10, 
+      scrollY = TRUE
+     )
+  ) |> formatSignif(columns=c('p_val', 'avg_log2FC', 'p_val_adj'), digits=4 )
+```
+
+```{r message=FALSE}
+seurat_obj |> FeaturePlot("XIST")
+seurat_obj |> VlnPlot("XIST")
+
+```
+
+```{r message=FALSE}
+Idents(seurat_obj) <- "RNA_clusters_leiden_res0.8"
+clusters_7<- FindMarkers(seurat_obj, ident.1 = 7) |> as_tibble(rownames="gene")
+clusters_9<- FindMarkers(seurat_obj, ident.1 = 9) |> as_tibble(rownames="gene")
+
+cluster_9_markers <-  clusters_9 |> slice_min(p_val, n = 30) |> pull(gene)
+
+paste(cluster_9_markers, collapse = ", ")
+```
+
+```{r message=FALSE}
+variable_features_vec <- VariableFeatures(seurat_obj) |> paste( collapse = ", ")
+tibble(genes= variable_features_vec)|> write_csv(file = paste0("output\\variable_genes_",dataset_name,".csv"))
+
+tibble(genes= VariableFeatures(seurat_obj) ) |> write_csv(file = paste0("output\\variable_genes_",dataset_name,".csv"))
+
+yu_gramp_Cell_2021_tHIO <- read_excel("../../raw_data/cubi_cusco/genesets_from_literature/yu...gramp_Cell_2021_tHIO.xlsx")
+```
+
+# module score function
+
+```{r message=FALSE}
+add_named_module_score <- function(seurat_object,named_gene_list){
+
+seurat_obj <- AddModuleScore(seurat_obj, features=named_gene_list, name = "m.s.")
+
+names_vec <-paste0("m.s.", names(named_gene_list))
+names(names_vec) <- paste0("m.s.", 1:length(names_vec))
+
+names(seurat_obj@meta.data) <- str_replace_all(names(seurat_obj@meta.data),names_vec)
+
+return(seurat_obj)
+}
+
+seurat_obj@meta.data <- seurat_obj@meta.data[,1:14]
+
+  vector_list <- yu_gramp_Cell_2021_tHIO %>%
+  group_by(group) %>%
+  summarise(value_vector = list(feature)) %>%
+  deframe()
+vector_list <- clean_names(vector_list)
+names(vector_list) <-    paste0("t_hio__",names(vector_list)  )
+
+#named_gene_list <- vector_list
+
+seurat_obj<- add_named_module_score(seurat_obj,vector_list)
+```
+
+```{r message=FALSE}
+# vector_list <- yu_gramp_Cell_2021_tHIO %>%
+#   group_by(group) %>%
+#   summarise(value_vector = list(feature)) %>%
+#   deframe()
+# 
+# vector_list <- clean_names(vector_list)
+# 
+# seurat_obj <- AddModuleScore(seurat_obj, features=vector_list, name = "module_score")
+# 
+# names_vec <-paste0("module_score_", names(vector_list))
+# names(names_vec) <- paste0("module_score", 1:length(names_vec))
+# 
+# names(seurat_obj@meta.data) <- str_replace_all(names(seurat_obj@meta.data),names_vec)
+```
+
+```{r message=FALSE}
+#| label: sd
+#| fig-width: 12
+#| fig-height: 9
+
+f1 <- function(x){x+theme(legend.position = "none")}
+
+p1 <- FeaturePlot(seurat_obj, names(seurat_obj@meta.data)[15:29], ) |> lapply(f1)
+
+p4 <- VlnPlot(seurat_obj, names(seurat_obj@meta.data)[15:29], pt.size = 0) |> lapply(f1) 
+#ggarrange(plotlist=p4,)
+#ggarrange(plotlist=p1)
+p4 |> patchwork::wrap_plots()
+```
+
+```{r message=FALSE}
+#| label: module scores umap 2
+#| fig-width: 15
+#| fig-height: 9
+
+mod_score_umap <- FeaturePlot(seurat_obj, names(seurat_obj@meta.data)[15:29], )|> lapply(f1) 
+ggarrange(plotlist = mod_score_umap)
+```
+
+```{r message=FALSE}
+seurat_subset <- seurat_obj |> filter(cell_line_cellranger==subfilter_by)
+```
+
+```{r message=FALSE}
+
+if(recalculate_2){
+  # basic seurat processing for each assay
+###--------------------------------------------------------------------------------------------
+for (assay_it in Assays(seurat_subset)) {
+  print(assay_it)
+  DefaultAssay(seurat_subset) <- assay_it
+  seurat_subset <- seurat_subset |> 
+    NormalizeData() 
+  
+  seurat_subset <- seurat_subset |>
+    FindVariableFeatures(assay = assay_it) |> 
+    ScaleData() 
+  print("runPCA")
+  seurat_subset <- seurat_subset |>
+    RunPCA(assay = assay_it,reduction.name = paste0("pca.",assay_it)) 
+  print("neighbors")
+  seurat_subset <- seurat_subset |> FindNeighbors(dims = 1:20,
+                                                  reduction = paste0("pca.",assay_it),
+                                                  assay = assay_it) 
+  
+  print("clusters")
+  seurat_subset <- seurat_subset |>  FindClusters(
+    resolution = 0.8,
+    verbose = FALSE,
+    cluster.name =paste0(assay_it, "_clusters_leiden_res0.8"),algorithm=4
+    #graph.name = paste0("kNN_","pca.",assay_it)
+  ) 
+  
+  seurat_subset <- seurat_subset |>
+    RunUMAP(dims = 1:10, reduction = paste0("pca.",assay_it),
+            assay = assay_it,
+            reduction.name =paste0("umap.",assay_it) )
+  
+  gc()
+}
+    write_rds(seurat_subset, file = paste0("intermediate_data/",dataset_name,"_",subfilter_by,"_filtered_seurat_obj_processed.rds" ))
+  
+}
+
+
+###-----------------------------------------------------------------------------------
+
+```
+
+```{r message=FALSE}
+seurat_subset <- read_rds(file = paste0("intermediate_data/",dataset_name,"_",subfilter_by,"_filtered_seurat_obj_processed.rds" ))
+
+DefaultAssay(seurat_subset) <-"RNA" 
+
+seurat_subset |> DimPlot(reduction ="umap.RNA" )
+seurat_subset |> DimPlot(reduction ="pca.RNA" ,dims = c(1,2))
+seurat_subset |> DimPlot(reduction ="pca.RNA" ,dims = c(3,4))
+seurat_subset |> DimPlot(reduction ="pca.RNA" ,dims = c(4,5))
+```
+
+```{r message=FALSE}
+seurat_subset |> FeaturePlot( "nCount_RNA" )
+seurat_subset |> FeaturePlot( "percent_mito" )
+seurat_subset|> FeaturePlot( "nFeature_RNA" )
+seurat_subset|> FeaturePlot( "nFeature_RNA" )
+
+```
+
+```{r message=FALSE}
+seurat_subset_markers <- FindAllMarkers(seurat_subset) |> as_tibble()
+seurat_subset_markers |> group_by(cluster) |> slice_min(p_val, n=10)
+seurat_subset_markers |> filter(cluster==4, avg_log2FC>0) |> arrange(p_val) |> slice_min(p_val, n=30) |> pull(gene) |> 
+  paste(collapse = ", ")
+```
+
+```{r message=FALSE}
+#| label: module scores umap
+#| fig-width: 15
+#| fig-height: 9
+
+dings2 <- FeaturePlot(seurat_subset, names(seurat_subset@meta.data)[15:29], ) |> lapply(f1) 
+ggarrange(plotlist = dings2)
+```
+
+```{r message=FALSE}
+#| label: module scores vln
+#| fig-width: 15
+#| fig-height: 9
+
+dings3 <- VlnPlot(seurat_subset, names(seurat_subset@meta.data)[15:29], pt.size = 0)|> lapply(f1) 
+ggarrange(plotlist = dings3)
+```
+
+
