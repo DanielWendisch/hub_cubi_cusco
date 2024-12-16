@@ -58,6 +58,7 @@ library(stringr)
 library(ggridges)
 library(forcats)
 library(rhdf5)
+library(here)
 ###----------------------------------------------------------------------------------------------------
 
 
@@ -72,8 +73,9 @@ library(rhdf5)
 dataset_name <- "hub_01"
 path_raw_data_file <- "..\\..\\raw_data\\cubi_cusco"
 
-path_cellranger_output <- paste(sep = "\\", path_raw_data_file, "hub_01_outs\\multi\\count\\raw_feature_bc_matrix.h5")
-path_cellbender_output <-  paste(sep = "\\", path_raw_data_file,"cellbender\\hub_01\\hub_01_cellbender_corrected_filtered_seurat.h5")
+
+path_cellranger_output <- paste(sep = "\\", here(path_raw_data_file), "hub_01_outs\\multi\\count\\raw_feature_bc_matrix.h5")
+path_cellbender_output <-  paste(sep = "\\", here(path_raw_data_file),"cellbender\\hub_01\\hub_01_cellbender_corrected_filtered_seurat.h5")
 
 ## set hashtag conversion
 convert_vector <- c("CMO302"="hIO_BIHi005-A",
@@ -81,9 +83,9 @@ convert_vector <- c("CMO302"="hIO_BIHi005-A",
                     "CMO303"="hIO_BIHi250-A",
                     "CMO304"="hIO_UCSFi001-A")
 
-tag_calls_summary <- read_csv(paste(sep = "\\", path_raw_data_file,  "hub_01_outs/multi/multiplexing_analysis/tag_calls_summary.csv"))
-tag_calls_per_cell <- read_csv(paste(sep = "\\", path_raw_data_file, "hub_01_outs/multi/multiplexing_analysis/tag_calls_per_cell.csv"))
-assignment_confidence_table <- read_csv(paste(sep = "\\",path_raw_data_file,  "hub_01_outs/multi/multiplexing_analysis/assignment_confidence_table.csv"))
+tag_calls_summary <- read_csv(paste(sep = "\\", here(path_raw_data_file),  "hub_01_outs/multi/multiplexing_analysis/tag_calls_summary.csv"))
+tag_calls_per_cell <- read_csv(paste(sep = "\\", here(path_raw_data_file), "hub_01_outs/multi/multiplexing_analysis/tag_calls_per_cell.csv"))
+assignment_confidence_table <- read_csv(paste(sep = "\\",here(path_raw_data_file),  "hub_01_outs/multi/multiplexing_analysis/assignment_confidence_table.csv"))
 
 
 
@@ -130,7 +132,7 @@ if (calc_bp_cells) {
   setdiff(rownames(dat_cellbender)[!(grepl("ENSG", rownames(dat_cellbender)))],
           rownames(dat)) |> length()
   
-  write_matrix_dir(dat_cellbender, dir = paste0("BPcell_matrices/" , dataset_name, "/cellbender"))
+  write_matrix_dir(dat_cellbender, dir = here("BPcell_matrices/",paste0(dataset_name, "cellbender"))
   }
 #############################################################################################
 
@@ -139,9 +141,9 @@ if (calc_bp_cells) {
 # Create Seurat Matrix from stored BPcell matrices
 ###----------------------------------------------------------------------------------------------------
 
-dat_cellbender <- open_matrix_dir(dir = paste0("BPcell_matrices/" , dataset_name, "/cellbender"))
+dat_cellbender <- open_matrix_dir(dir = here("BPcell_matrices/",paste0(dataset_name, "cellbender")))
 
-dat <- open_matrix_dir(dir = paste("BPcell_matrices/", dataset_name))
+dat <- open_matrix_dir(dir = here("BPcell_matrices/", dataset_name))
 
 intersecting_cells <- intersect(colnames(dat_cellbender), colnames(dat))
 seurat_obj <- CreateSeuratObject(dat_cellbender[,intersecting_cells])
@@ -229,7 +231,7 @@ seurat_obj <- AddMetaData(seurat_obj,cell_barcodes)
 # )
 
 # add cellbender cell probabilities
-corrected = H5Fopen("C:\\Users\\Danne\\raw_data\\cubi_cusco\\cellbender\\hub_01\\hub_01_cellbender_corrected.h5")
+corrected = H5Fopen(here("../", "raw_data","cubi_cusco", "cellbender", "hub_01" ,"hub_01_cellbender_corrected.h5"))
 cell_prob_tbl <- tibble(
   cell=corrected$metadata$barcodes_analyzed,
   cell_probability= corrected$droplet_latents$cell_probability)
@@ -241,7 +243,9 @@ cell_prob_vec <- cell_prob_tbl |> pull(cell_probability)
 names(cell_prob_vec) <- cell_prob_tbl |> pull(cell)
 seurat_obj <- AddMetaData(seurat_obj, col.name = "cellbender_prob_to_be_cell", cell_prob_vec)
 
-write_rds(seurat_obj, "intermediate_data/QC_dataset_setup_hub_01.rds")
+if(!file.exists("intermediate_data")){ dir.create(here("intermediate_data"))}
+
+write_rds(seurat_obj, here("intermediate_data", "QC_dataset_setup_hub_01.rds"))
 ###-----------------------------------------------------------------------------------
 
 
@@ -262,17 +266,17 @@ seurat_obj.markers <- FindAllMarkers(seurat_obj,
                                      max.cells.per.ident = max_cells_ ,) |>
   as_tibble()
 
-write_rds(seurat_obj.markers, file = paste0("output/",
+write_rds(seurat_obj.markers, file = here(paste0(
                                             "QC_cluster_markers_min.pct_",min_pct,
                                             "_logfc.threshold_",logfc_threshold,
                                             "_max.cells.per.ident_",max_cells_,
-                                            ".rds"))
+                                            ".rds")))
 
-write_csv(seurat_obj.markers, file = paste0("output/",
+write_csv(seurat_obj.markers, file = here(paste0(
                                             "QCmarkers_min.pct_",min_pct,
                                             "_logfc.threshold_",logfc_threshold,
                                             "_max.cells.per.ident_",max_cells_,
-                                            ".csv"))
+                                            ".csv")))
 
 
 

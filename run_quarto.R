@@ -1,10 +1,24 @@
 library(quarto)
+library(tidyverse)
+library(here)
 
-old_file_names <- list.files("delete_candidates/")
-quarto_render(
-  input = "delete_candidates/minimal_quarto_test.qmd",
-  output_file = "minimal_quarto_test.html",
-  execute_params = map(c("hub_01", "hub_02"), ~list(dataset_name=.))
-)
+setwd(here("scripts"))
+dataset_params <- c("hub_01","hub_02")
 
-new_file_names <- setdiff(list.files("scripts/"),old_file_names)
+for (param in dataset_params) {
+  print(param)
+  
+  outpute_file_name <- paste0(param, "_processing_after_qc",".html")
+  param_title <- paste0(param, "processing after QC")
+  quarto_render(
+    input = "hub_0x_processing_after_qc.qmd",
+    output_file = outpute_file_name,
+    execute_params = list(dataset_name=param, title=param_title))
+  file.rename(outpute_file_name, paste0("../docs/",outpute_file_name))# move file to docs
+  
+}
+
+setwd(here())
+
+
+

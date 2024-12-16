@@ -313,5 +313,3 @@ ggarrange(plotlist = dings2)
 dings3 <- VlnPlot(seurat_subset, names(seurat_subset@meta.data)[15:29], pt.size = 0)|> lapply(f1) 
 ggarrange(plotlist = dings3)
 ```
-
-

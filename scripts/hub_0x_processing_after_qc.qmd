@@ -1,5 +1,5 @@
 ---
-title: "hub_0x_processing_after_qc"
+title: "!expr params$title"
 format:
   html:
     embed-resources: true
@@ -8,6 +8,7 @@ editor: visual
 output_dir: "docs"
 params:
   dataset_name: "hub_01"
+  title: "default title"
 ---
 
 ```{r message=FALSE}
@@ -20,6 +21,7 @@ library(ggpubr)
 library(BayesPrism)
 library(ggpubr)
 library(DT)
+library(here)
 
 #dataset_name <- "hub_01"
 #dataset_name <- "hub_02"
@@ -27,7 +29,8 @@ dataset_name <- params$dataset_name # specified in the yaml header
 recalculate_1 <- FALSE # seurat object processing combined object
 recalculate_2 <- FALSE # seurat object processing sub object
 
-seurat_obj <- read_rds(paste0("intermediate_data\\",dataset_name,"_filtered_seurat_obj.rds") )
+seurat_obj <- read_rds(here("intermediate_data",paste0(dataset_name,"_filtered_seurat_obj.rds"))
+   )
 subfilter_by <- "hIO_BIHi250-A"
 
 ```
@@ -71,13 +74,15 @@ for (assay_it in Assays(seurat_obj)) {
 
   }
 ###-----------------------------------------------------------------------------------
-  write_rds(seurat_obj, file = paste0("intermediate_data/",dataset_name,"_filtered_seurat_obj_processed.rds" ))
+  write_rds(seurat_obj, file = here(
+    "intermediate_data", paste0(dataset_name,"_filtered_seurat_obj_processed.rds" )))
   
 }
 ```
 
 ```{r message=FALSE}
-seurat_obj <- read_rds(file = paste0("intermediate_data/",dataset_name,"_filtered_seurat_obj_processed.rds" ))
+seurat_obj <- read_rds(file =  here(
+  "intermediate_data", paste0(dataset_name,"_filtered_seurat_obj_processed.rds" )))
 
 DefaultAssay(seurat_obj) <- "RNA"
 
@@ -90,13 +95,13 @@ seurat_obj |> DimPlot(group.by = "cell_line_doublet_cellranger" )
 ```
 
 ```{r message=FALSE}
-markers_left <- seurat_obj |> FindMarkers(ident.1=c(5,6,7,8,10,15,4,14))
+#markers_left <- seurat_obj |> FindMarkers(ident.1=c(5,6,7,8,10,15,4,14))
 
-markers_left |> filter(avg_log2FC<0) |> head()
-markers_left |> filter(avg_log2FC>0) |> head()
+#markers_left |> filter(avg_log2FC<0) |> head()
+#markers_left |> filter(avg_log2FC>0) |> head()
 
 
-FeaturePlot(seurat_obj, c("KRT8","SOX2-OT"))
+#FeaturePlot(seurat_obj, c("KRT8","SOX2-OT"))
 ```
 
 ```{r message=FALSE}
@@ -147,11 +152,11 @@ paste(cluster_9_markers, collapse = ", ")
 
 ```{r message=FALSE}
 variable_features_vec <- VariableFeatures(seurat_obj) |> paste( collapse = ", ")
-tibble(genes= variable_features_vec)|> write_csv(file = paste0("output\\variable_genes_",dataset_name,".csv"))
+tibble(genes= variable_features_vec)|> write_csv(file = here(paste0("output\\variable_genes_",dataset_name,".csv")))
 
-tibble(genes= VariableFeatures(seurat_obj) ) |> write_csv(file = paste0("output\\variable_genes_",dataset_name,".csv"))
+tibble(genes= VariableFeatures(seurat_obj) ) |> write_csv(file = here(paste0("output\\variable_genes_",dataset_name,".csv")))
 
-yu_gramp_Cell_2021_tHIO <- read_excel("../../raw_data/cubi_cusco/genesets_from_literature/yu...gramp_Cell_2021_tHIO.xlsx")
+yu_gramp_Cell_2021_tHIO <- read_excel(here("../../raw_data/cubi_cusco/genesets_from_literature/yu...gramp_Cell_2021_tHIO.xlsx"))
 ```
 
 # module score function
@@ -264,8 +269,9 @@ for (assay_it in Assays(seurat_subset)) {
   
   gc()
 }
-    write_rds(seurat_subset, file = paste0("intermediate_data/",dataset_name,"_",subfilter_by,"_filtered_seurat_obj_processed.rds" ))
-  
+    write_rds(seurat_subset, file = paste0("intermediate_data/", ))
+  file = here(
+    "intermediate_data", paste0(dataset_name,"_",subfilter_by,"_filtered_seurat_obj_processed.rds" ))
 }
 
 
@@ -274,7 +280,7 @@ for (assay_it in Assays(seurat_subset)) {
 ```
 
 ```{r message=FALSE}
-seurat_subset <- read_rds(file = paste0("intermediate_data/",dataset_name,"_",subfilter_by,"_filtered_seurat_obj_processed.rds" ))
+seurat_subset <- read_rds(file = here(paste0("intermediate_data/",dataset_name,"_",subfilter_by,"_filtered_seurat_obj_processed.rds" )))
 
 DefaultAssay(seurat_subset) <-"RNA" 
 
