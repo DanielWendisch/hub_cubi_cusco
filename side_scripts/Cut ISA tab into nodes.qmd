@@ -1,0 +1,134 @@
+---
+title: "Cut ISA tab into nodes"
+format: html
+editor: visual
+---
+
+
+```{r}
+# https://nrennie.rbind.io/blog/creating-flowcharts-with-ggplot2/
+
+
+library("googlesheets4")
+library(here)
+library(tidyverse)
+library(tidygraph)
+library(igraph)
+library(janitor)
+library(ggraph)
+library(ggflowchart)
+library(janitor)
+library(patchwork)
+raw_data_path <- here("..", "..", "raw_data", "cubi_cusco")
+
+```
+
+## New sample names 20
+
+```{r}
+VFV_3p <- read_tsv(here(raw_data_path, "meta_data", "2025-03-26_Valerias_SODAR_draft", "a_HUB_model_characterisation_GEX_3pseq_transcription_profiling_VFV.txt"))
+VFV_polya <- read_tsv(here(raw_data_path, "meta_data", "2025-03-26_Valerias_SODAR_draft", "a_HUB_model_characterisation_GEX_polyA_transcription_profiling_VFV.txt"))
+VFV_sc <- read_tsv(here(raw_data_path, "meta_data", "2025-03-26_Valerias_SODAR_draft", "a_HUB_model_characterisation_GEX_sc_transcription_profiling_VFV.txt")) 
+s_HUB_model_characterisation <- read_tsv(here(raw_data_path,"2023_CUSCO_HUB_2025-03-25_2","s_HUB_model_characterisation.txt"))
+
+VFV_sc_gex <- VFV_sc[VFV_sc[,6]=="Gene Expression",]
+
+VFV_sc_gex |> clean_names() |> select(sample_name, extract_name,parameter_value_fastq_prefix)
+VFV_polya |> clean_names() |> select(sample_name, parameter_value_fastq_prefix)
+VFV_3p |> clean_names() |> select(sample_name, extract_name_18, extract_name_30)
+```
+
+```{r}
+cut_isatab_into_nodes <- function(df) {
+  first_protocol <- which(str_detect(names(df), "Protocol REF"))[1]
+  # Subset the tibble from the first "Protocol REF" column onward
+  df_sub <- df %>% select(first_protocol:ncol(df))
+
+  # Create a grouping vector: each time a column name matches "Protocol REF" we start a new group.
+  groups <- cumsum(str_detect(names(df_sub), "Protocol REF"))
+
+  # Use purrr::map to select columns for each group without an explicit loop:
+  subtibbles <- map(unique(groups), ~ df_sub %>% select(which(groups == .x)))
+
+  return(subtibbles)
+}
+
+
+#Below is one solution using purrr functions (without explicit loops) that goes through each tibble in a list, checks its first column, and—if that #column contains exactly one unique value (i.e. a singular unique value)—assigns that value as the name for that list entry. If there are two or more #unique values in the first column, no name is added for that element.
+
+name_nodes_by_first_colum <- function(tb_list) {
+  # For each tibble in the list, check the unique values in its first column.
+  new_names <- map_chr(tb_list, function(tb) {
+    uniq_vals <- unique(tb[[1]])
+    # If there's exactly one unique value, return it as a character string;
+    # otherwise return NA.
+    if(length(uniq_vals) == 1) {
+      as.character(uniq_vals)
+    } else {
+      NA_character_
+    }
+  })
+  
+  # Assign names only for those elements that returned a valid name
+  valid <- !is.na(new_names)
+  names(tb_list)[valid] <- new_names[valid]
+  
+  tb_list
+}
+
+
+process_subtibble <- function(tb) {
+  # Clean column names: remove "Parameter Value" and any non-alphanumeric characters
+  cleaned_names <- names(tb) %>%
+    str_remove_all("Parameter Value") |>
+    # str_remove_all("[^A-Za-z0-9]") |>
+    make_clean_names()
+
+  tb <- tb %>% set_names(cleaned_names)
+
+  # Extract the unique value from the first column
+  unique_val <- tb[[1]] %>%
+    unique() %>%
+    as.character()
+
+  # Append the unique value to the remaining column names (using underscore as separator)
+  new_names <- paste0(names(tb)[-1], "__", unique_val)
+
+  # Remove the first column and update the names of the remaining columns
+  tb <- tb %>%
+    select(-1) %>%
+    set_names(new_names)
+  return(tb)
+}
+
+add_nodenames_to_colnames <- function(subtibbles) {
+  # Function to process each subtibble
+  # Process all subtibbles without an explicit loop:
+  clean_subtibbles <- map(subtibbles, process_subtibble)
+
+  # For example, inspect the first processed subtibble:
+  return(clean_subtibbles)
+}
+```
+
+```{r}
+isatab_to_indexed_nodelist <- function(isatab){
+  node_list <- isatab |> cut_isatab_into_nodes() |>
+    name_nodes_by_first_colum() |>
+    add_nodenames_to_colnames() 
+  sample_names <- isatab |> select("Sample Name") #re_add_sample_names
+  node_list <- map(node_list, function(x)bind_cols(sample_names,x))
+  return(node_list)
+}
+
+node_list_sc <- VFV_sc_gex |> isatab_to_indexed_nodelist()
+node_list_polya <- VFV_polya |> isatab_to_indexed_nodelist()
+node_list_3p <- VFV_3p |> isatab_to_indexed_nodelist()
+node_list_s <- s_HUB_model_characterisation |> isatab_to_indexed_nodelist()
+
+node_list_sc
+```
+```{r}
+
+```
+

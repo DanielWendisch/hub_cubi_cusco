@@ -1,0 +1,242 @@
+---
+title: "testing experimental design flow diagrams"
+format: html
+editor: visual
+---
+
+```{r}
+# https://nrennie.rbind.io/blog/creating-flowcharts-with-ggplot2/
+
+
+library("googlesheets4")
+library(here)
+library(tidyverse)
+library(tidygraph)
+library(igraph)
+library(janitor)
+library(ggraph)
+library(ggflowchart)
+library(janitor)
+library(patchwork)
+
+raw_data_path <- here("..", "..", "raw_data", "cubi_cusco")
+name_converter_tbl_path <- here(raw_data_path, "2025-xx-xx_HUB sample name conversion - Sheet1.csv")
+
+if (from_here <- file.exists(name_converter_tbl_path)) {
+  name_convert_tbl <- read_csv(name_converter_tbl_path)
+} else {
+  name_convert_tbl <- read_sheet("https://docs.google.com/spreadsheets/d/18ObmuM4lkVR9MZ9KbaA-Y0ZUEyJOaJ2jYaN1v7Kdfck/edit?gid=0#gid=0") # google sheet 2025-xx-xx_HUB sample name conversion
+}
+a_meta_data <- read_tsv(here(raw_data_path, "2023_CUSCO_HUB_2025-03-25_2", "a_HUB_model_characterisation_GEX_sc_transcription_profiling.txt"))
+```
+
+```{r}
+a_meta_data |>
+  clean_names() |>
+  pull(parameter_value_library_type) |>
+  unique()
+
+a_meta_data |>
+  clean_names() |>
+  mutate(sample_name = str_replace_all(sample_name, "_", "-")) |>
+  separate_wider_delim(delim = "-", cols = c("sample_name"), names = c("lib", "type", "tissue", "rest"), too_many = "merge", too_few = "align_start") |>
+  filter(type == "GEX") |>
+  select(c("lib", "type", "tissue", "rest", "library_name"))
+
+
+a_meta_data <- a_meta_data |> clean_names()
+
+hepatos <- a_meta_data |>
+  filter(parameter_value_library_type == "Gene Expression") |>
+  select(sample_name) |>
+  separate_wider_delim(
+    delim = "_", cols = c("sample_name"),
+    names = c("lib", "tissue", "cell", "rest"),
+    too_many = "merge", too_few = "align_start"
+  ) |>
+  filter(tissue == "Hepatos") |>
+  mutate(cell = str_replace_all(
+    cell,
+    c(
+      "001-B" = "BIH-001B",
+      "005-A" = "BIH-005A",
+      "UCSFi" = "UCSFi"
+    )
+  ))
+hepatos
+```
+
+```{r}
+cardios <- a_meta_data |>
+  filter(parameter_value_library_type == "Gene Expression") |>
+  select(sample_name) |>
+  separate_wider_delim(
+    delim = "_", cols = c("sample_name"),
+    names = c("lib", "tissue", "dings_2", "vt_gt", "cell"),
+    too_many = "merge", too_few = "align_start"
+  ) |>
+  filter(str_detect(tissue, "Cardio")) |>
+  mutate(cell = str_replace_all(
+    cell,
+    c(
+      "001-B" = "BIH-001B",
+      "005-A" = "BIH-005A",
+      "UCSFi" = "UCSFi"
+    )
+  ))
+cardios
+```
+
+```{r}
+seq_samples <- name_convert_tbl |> clean_names()
+seq_samples <- seq_samples |>
+  select(sample_name_new) |>
+  separate_wider_delim(cols = sample_name_new, delim = "_", names = c("run", "type", "cell_line", "extr_conds"), too_few = "align_start")
+
+unique(seq_samples$run)
+unique(seq_samples$type)
+unique(seq_samples$cell_line)
+unique(seq_samples$extr_conds)
+
+test <- bind_rows(
+  tibble(
+    from = "iPSC",
+    to = seq_samples |> pull(type)
+  ),
+  tibble(
+    from = seq_samples |> pull(type),
+    to = seq_samples |> pull(cell_line)
+  ),
+  tibble(
+    from = seq_samples |> pull(cell_line),
+    to = seq_samples |> pull(extr_conds)
+  )
+)
+
+test <- test |> drop_na()
+
+graph <- as_tbl_graph(test, directed = TRUE) # Use FALSE for an undirected graph
+
+
+ig <- as.igraph(graph)
+root_node <- V(ig)[igraph::degree(ig, mode = "in") == 0]
+depths <- igraph::distances(ig, v = root_node[1], to = V(ig))
+
+graph_w_depth <- graph %>%
+  activate(nodes) %>%
+  mutate(depth = as.numeric(depths))
+
+ggraph(graph_w_depth, layout = "dendrogram") +
+  geom_edge_diagonal() +
+  geom_node_point(aes(size = depth, color = factor(depth))) +
+  geom_node_text(aes(label = name), repel = TRUE) +
+  theme_void()
+
+ggraph(graph_w_depth, layout = "tree") +
+  geom_edge_diagonal() +
+  geom_node_point(aes(size = depth, color = factor(depth))) +
+  geom_node_text(aes(label = name), repel = TRUE) +
+  theme_void()
+```
+
+```{r}
+neighbor_pairs <- function(df) {
+  df %>%
+    rowwise() %>%
+    mutate(pairs = list(tibble(
+      x = as.character(c_across(everything())[-ncol(df)]),
+      y = as.character(c_across(everything())[-1])
+    ))) %>%
+    select(pairs) %>%
+    unnest(pairs)
+}
+
+plot_list <- list()
+for (diff_type in unique(seq_samples$type)) {
+  test <- seq_samples |>
+    filter(type == diff_type) |>
+    neighbor_pairs()
+
+  test <- test |> drop_na()
+
+  graph <- as_tbl_graph(test, directed = TRUE) # Use FALSE for an undirected graph
+
+
+  ig <- as.igraph(graph)
+  root_node <- V(ig)[igraph::degree(ig, mode = "in") == 0]
+  depths <- igraph::distances(ig, v = root_node[1], to = V(ig))
+
+  graph_w_depth <- graph %>%
+    activate(nodes) %>%
+    mutate(depth = as.numeric(depths))
+
+  plot_list[[diff_type]] <- ggraph(graph_w_depth, layout = "dendrogram") +
+    geom_edge_diagonal() +
+    geom_node_point(aes(size = depth, color = factor(depth))) +
+    geom_node_text(aes(label = name), repel = TRUE) +
+    theme_void()
+}
+
+plot_list
+```
+
+```{r}
+plot_list_run <- list()
+for (run_ in unique(seq_samples$run)) {
+  test <- seq_samples |>
+    filter(run == run_) |>
+    neighbor_pairs()
+
+  test <- test |> drop_na()
+
+  graph <- as_tbl_graph(test, directed = TRUE) # Use FALSE for an undirected graph
+
+
+  ig <- as.igraph(graph)
+  root_node <- V(ig)[igraph::degree(ig, mode = "in") == 0]
+  depths <- igraph::distances(ig, v = root_node[1], to = V(ig))
+
+  graph_w_depth <- graph %>%
+    activate(nodes) %>%
+    mutate(depth = as.numeric(depths))
+
+  plot_list_run[[run_]] <- ggraph(graph_w_depth, layout = "dendrogram") +
+    geom_edge_diagonal() +
+    geom_node_point(aes(size = depth, color = factor(depth))) +
+    geom_node_text(aes(label = name), repel = TRUE) +
+    theme_void()
+}
+
+plot_list_run
+```
+
+```{r}
+test <- seq_samples |>
+  filter(type == "hIO") |>
+  neighbor_pairs()
+
+test <- test |> drop_na()
+
+graph <- as_tbl_graph(test, directed = TRUE) # Use FALSE for an undirected graph
+
+
+ig <- as.igraph(graph)
+root_node <- V(ig)[igraph::degree(ig, mode = "in") == 0]
+depths <- igraph::distances(ig, v = root_node[1], to = V(ig))
+
+graph_w_depth <- graph %>%
+  activate(nodes) %>%
+  mutate(depth = as.numeric(depths))
+
+ggraph(graph_w_depth, layout = "dendrogram") +
+  geom_edge_diagonal() +
+  geom_node_point(aes(size = depth, color = factor(depth))) +
+  geom_node_text(aes(label = name), repel = TRUE) +
+  theme_void()
+
+ggraph(graph_w_depth, layout = "tree") +
+  geom_edge_diagonal() +
+  geom_node_point(aes(size = depth, color = factor(depth))) +
+  geom_node_text(aes(label = name), repel = TRUE) +
+  theme_void()
+```

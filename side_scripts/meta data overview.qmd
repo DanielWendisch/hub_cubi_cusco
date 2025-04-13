@@ -1,0 +1,274 @@
+---
+title: "meta data overview"
+format: html
+editor: visual
+---
+
+
+```{r}
+# https://nrennie.rbind.io/blog/creating-flowcharts-with-ggplot2/
+
+library("googlesheets4")
+library(here)
+library(tidyverse)
+library(tidygraph)
+library(igraph)
+library(janitor)
+library(ggraph)
+library(ggflowchart)
+library(janitor)
+library(patchwork)
+raw_data_path <- here("..", "..", "raw_data", "cubi_cusco")
+
+# Data
+VFV_3p <- read_tsv(here(raw_data_path, "meta_data", "2025-03-26_Valerias_SODAR_draft", "a_HUB_model_characterisation_GEX_3pseq_transcription_profiling_VFV.txt"))
+VFV_polya <- read_tsv(here(raw_data_path, "meta_data", "2025-03-26_Valerias_SODAR_draft", "a_HUB_model_characterisation_GEX_polyA_transcription_profiling_VFV.txt"))
+VFV_sc <- read_tsv(here(raw_data_path, "meta_data", "2025-03-26_Valerias_SODAR_draft", "a_HUB_model_characterisation_GEX_sc_transcription_profiling_VFV.txt")) 
+s_HUB_model_characterisation <- read_tsv(here(raw_data_path,"2023_CUSCO_HUB_2025-03-25_2","s_HUB_model_characterisation.txt"))
+
+VFV_sc_gex <- VFV_sc[VFV_sc[,6]=="Gene Expression",]
+```
+
+## Covariates from names
+
+```{r}
+covariates_sc <- VFV_sc_gex |> clean_names() |> select(sample_name, extract_name,parameter_value_fastq_prefix) |>
+  #select("Sample Name") |> 
+  separate_wider_delim(cols = "sample_name", delim = "_",
+                       names = c("run","cell_type",
+                                 "cell_line","d","e"),
+                       too_few = "align_start",too_many = "merge",cols_remove = FALSE) |>
+  mutate(assay="sc")
+
+covariates_polya <- VFV_polya |> clean_names() |> select(sample_name, extract_name_18) |> rename(extract_name=extract_name_18) |> 
+  #select("Sample Name") |> 
+  separate_wider_delim(cols = "sample_name", delim = "_",
+                       names = c("run","cell_type",
+                                 "cell_line","d","e"),
+                       too_few = "align_start",too_many = "merge",cols_remove = FALSE) |>
+  mutate(assay="polya")
+
+covariates_3p <- VFV_3p |> clean_names() |> select(sample_name, extract_name_18) |> rename(extract_name=extract_name_18) |> 
+  #select("Sample Name") |> 
+  separate_wider_delim(cols = "sample_name", delim = "_",
+                       names = c("run","cell_type",
+                                 "cell_line","d","e"),
+                       too_few = "align_start",too_many = "merge",cols_remove = FALSE) |>
+  mutate(assay="3p")
+
+all_covariates_w_samplename <- bind_rows(covariates_sc,covariates_polya,covariates_3p)
+all_covariates <- all_covariates_w_samplename |> select(-sample_name)
+
+```
+
+```{r}
+covariates__samplename_clean_with_filesnames <- all_covariates_w_samplename |>
+  # filter(cell_type %in% c("Cardiomyocytes",
+  #                         "Hepatocytes",
+  #                         "Intestinal Organoids",
+  #                         "Endothelial cells",
+  #                         "Lung Organoids Alveolar"))|> 
+  mutate(d=str_replace_all(d, "\\(",""))|> 
+  mutate(d=str_replace_all(d, "\\)","")) |> 
+  mutate(d=str_replace_all(d, "\\ ","")) |> 
+  mutate(d=str_replace_all(d,
+                           c("-EC-P-008"="",
+                             "Pool-01"="Pool",
+                             "10X-hIO-007"="10X",
+                             "Pool-hIO-007"="Pool",
+                             "-KL-05"="",
+                             "-KL-006"="",
+                             "-KL-14"="",
+                             "-KL-23"="",
+                             "-KL-24"="",
+                             "-Agg-012"="",
+                             "LP-020"=""
+                             ))) |> 
+  mutate(d=str_replace_all(d,
+                           c("-hLOA-010"= "",
+                             "-AO-V1"="",
+                             "-hLOA-022"="",
+                             "-EC-ETV2-003"="-ETV2",
+                             "-hLOA-011-d7-V2"="-d7-V2",
+                             "-hLOA-011-0h-V2"="-0h-V2",
+                             "-hLOA-011-0h-AO-V2"="-0h-V2-AO",
+                           "hLOA-kit-021"="10X",
+                           "hLOA-"="10X",
+                           "hIO"="10X",
+                           "hIO"="10X",
+                           "Pool-ETV2"="Pool")))
+  
+covariates__samplename_clean_with_filesnames
+```
+
+
+
+```{r}
+#make sure second factor level enumeration (sub_codnditions) is a factor so that it is diplayed later
+
+covariates_no_brain <- covariates__samplename_clean_with_filesnames |>
+  filter(run!="pre-HUB") |> 
+  filter(d!="Pool")
+  
+covariates_summarized<- covariates_no_brain |> 
+#covariates_clean_summerized <- covariates_clean |> 
+  group_by(cell_line,cell_type, assay,d) |> 
+  mutate(sub_conditions = length(unique(e)),.groups = "drop") |> 
+  summarise(count = n(),.groups = "drop") |>
+  mutate(cell_type=as_factor(cell_type))
+
+
+sample_tiles <- function(x){x |> 
+#  group_by(cell_line,cell_type, d) |> 
+ # summarise(sub_conditions = str_c(unique(e), collapse = " "),.groups = "drop") |> 
+  ggplot(aes(cell_line, cell_type)) +
+  geom_tile(fill="lightblue", color="black")+
+  geom_text(aes(label = count), size=3)+
+  facet_wrap(vars(d))+
+  theme_bw() +
+  # theme(axis.title.x = element_blank(),  # remove x-axis title for top plots
+  #       axis.text.x = element_blank(),
+  #       axis.ticks.x = element_blank())+
+  scale_color_hue(drop = FALSE)+
+  scale_shape(drop = FALSE)+
+  scale_x_discrete(drop = FALSE)+
+  scale_y_discrete(drop = FALSE)
+  }
+  
+covariates_summarized$cell_type |> levels()
+
+covariates_summarized |> 
+  sample_tiles()+
+  facet_wrap(~assay, ncol=1)
+
+
+p_a <- covariates_summarized |> 
+  filter(assay=="sc") |> 
+  sample_tiles()+
+  ylab("single-cell")
+p_b <- covariates_summarized |> 
+  filter(assay=="polya") |> 
+  sample_tiles()+
+  ylab("poly-a")
+p_c <- covariates_summarized |> 
+  filter(assay=="3p") |> 
+  sample_tiles()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  ylab("3p")
+
+(p_a)/p_b/p_c + 
+  plot_layout(guides = "collect")
+  
+```
+```{r}
+library(readxl)
+
+sample_tbl <- read_xlsx(here(raw_data_path,"2025-04-03_HUB_samples_replicates.xlsx" ))
+map(sample_tbl, unique)
+```
+
+
+```{r}
+sample_tbl <- sample_tbl |> clean_names()
+sample_tbl_long <- sample_tbl |> pivot_longer(cols = three_prime_seq:single_cell_seq, names_to = "seq_method", values_to = "availability") |> 
+  mutate(seq_method=factor(seq_method,levels = c("single_cell_seq","three_prime_seq","poly_a_seq")))
+
+make_rep_counts_tbl <- function(x){x |> 
+  group_by(model, cell_line,biological_replicate, seq_method) |> 
+  mutate(n_tech_replicates=n()) |> 
+  select(model, cell_line, seq_method,n_tech_replicates) |> 
+  distinct() |> 
+  group_by(model, cell_line, seq_method) |> 
+  mutate(n_bio_replicates=n()) |> 
+  ungroup() |> 
+  select(-biological_replicate) |> 
+  distinct()
+}
+
+replicate_tiles <- function(x){x |> 
+#  group_by(cell_line,cell_type, d) |> 
+ # summarise(sub_conditions = str_c(unique(e), collapse = " "),.groups = "drop") |> 
+  ggplot(aes(cell_line, model, fill=factor(n_bio_replicates))) +
+  geom_tile(color="black")+
+  geom_text(aes(label = n_bio_replicates), size=3)+
+  geom_text(data=filter(x,n_tech_replicates>1),aes(cell_line, model),label="T", position = position_nudge(x = 0.2))+
+  theme_bw() +
+  # theme(axis.title.x = element_blank(),  # remove x-axis title for top plots
+  #       axis.text.x = element_blank(),
+  #       axis.ticks.x = element_blank())+
+  scale_color_hue(drop = FALSE)+
+  scale_shape(drop = FALSE)+
+  scale_x_discrete(drop = FALSE)+
+  scale_y_discrete(drop = FALSE)+
+  theme(axis.text.x = element_text(angle = 70, hjust = 1))
+}
+
+run_tiles <- function(x){x |> 
+#  group_by(cell_line,cell_type, d) |> 
+ # summarise(sub_conditions = str_c(unique(e), collapse = " "),.groups = "drop") |> 
+  ggplot(aes(cell_line, model, fill=factor(n_bio_replicates))) +
+  geom_tile(color="black")+
+  geom_text(aes(label = n_bio_replicates), size=3)+
+  geom_text(data=filter(x,n_tech_replicates>1),aes(cell_line, model),label="T", position = position_nudge(x = 0.2))+
+  theme_bw() +
+  # theme(axis.title.x = element_blank(),  # remove x-axis title for top plots
+  #       axis.text.x = element_blank(),
+  #       axis.ticks.x = element_blank())+
+  scale_color_hue(drop = FALSE)+
+  scale_shape(drop = FALSE)+
+  scale_x_discrete(drop = FALSE)+
+  scale_y_discrete(drop = FALSE)+
+  theme(axis.text.x = element_text(angle = 70, hjust = 1))
+}
+
+
+
+disso_sample_tbl_long <-  sample_tbl_long |>
+  filter(lysed_from=="dissociated cells") |> 
+  make_rep_counts_tbl()
+
+disso_sample_tbl_long_available <-  sample_tbl_long |>
+  filter(lysed_from=="dissociated cells",
+         availability=="yes") |> 
+  make_rep_counts_tbl()
+```
+
+
+```{r}
+disso_sample_tbl_long |> 
+  replicate_tiles()+
+  facet_wrap(vars(seq_method), ncol=1)+
+  ggtitle("HUB project biological replicates - with samples in processing",
+          subtitle = "T= technical replicates available")+
+  guides(fill=guide_legend(title="biological replicate"))
+ggsave(here("output/", paste(Sys.Date(), "sequenced_and_samples_in_processing_overview.png", sep="_")))
+```
+
+
+```{r}
+disso_sample_tbl_long_available|> 
+  replicate_tiles()+
+  facet_wrap(vars(seq_method), ncol=1)+
+  guides(fill=guide_legend(title="biological replicate"))+
+  ggtitle("HUB project biological replicates - already sequenced samples",
+          subtitle = "T= technical replicates available")
+
+ggsave(here("output/", paste(Sys.Date(), "sequenced_samples_overview.png", sep="_")))
+```
+
+```{r}
+sample_tbl_long |> 
+  filter(lysed_from=="dissociated cells") |>
+  select(run,cell_line,model) |> 
+  distinct() |> 
+  ggplot(aes(cell_line, model, fill=run))+
+  geom_tile()+
+  facet_wrap(vars(run))+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 70, hjust = 1))+
+  ggtitle("HUB project sequencing batches")+
+  guides(fill=guide_legend(title="batch"))
+
+ggsave(here("output/", paste(Sys.Date(), "batch overview.png", sep="_")))
+```
+

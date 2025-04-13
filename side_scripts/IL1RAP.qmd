@@ -1,0 +1,141 @@
+---
+title: "IL1RAP"
+author: "D Wendisch"
+date: "`r Sys.Date()`"
+format: 
+  html:
+    embed-resources: true
+execute:
+  echo: false  # Hides all code
+  warning: false  # Hides warnings
+  message: false  # Hides messages
+---
+
+## Single cell data
+
+```{r}
+library(here)
+library(tidyverse)
+library(Seurat)
+library(DESeq2)
+library(janitor)
+library(knitr)
+
+
+EC_seurat <- readRDS(here("intermediate_data","hub_02_filtered_seurat_obj_processed.rds"))
+```
+
+```{r}
+
+
+#EC_seurat |> FeaturePlot("IL1RAP", reduction = "umap.RNA")
+
+#EC_seurat |> DimPlot(reduction = "umap.RNA",group.by = "cell_line_cellranger")
+
+EC_seurat |> VlnPlot("IL1RAP",group.by = "cell_line_cellranger")
+
+
+```
+
+```{r}
+sample_names_clean <- c("GEX-BLK_0098_3pseq",
+"GEX-BLK_0099_3pseq",	
+"GEX-BLK_0100_3pseq",
+"GEX-BLK_0101_3pseq",	
+"GEX-BLK_0102_3pseq",
+"GEX-BLK_0103_3pseq",	
+"GEX-BLK_0104_3pseq",	
+"GEX-BLK_0105_a_3pseq") |> make_clean_names()
+
+sample_descriptors <- c("HUB02_Endothelial.cells_BIHi001-B_10X",
+"HUB02_Endothelial.cells_BIHi005-A_10X",
+"HUB02_Endothelial.cells_BIHi250-A_10X",
+"HUB02_Endothelial.cells_UCSFi001-A_10X",
+"HUB02_Endothelial.cells_BIHi001-A_10X",
+"HUB02_Endothelial.cells_BIHi005-A_Pool_ETV2",
+"HUB02_Endothelial.cells_HMGUi001-A_Pool_ETV2",
+"HUB02_Endothelial.cells_HUVECS_Pool")
+
+
+counts_table_hub_01_02 <- read_csv("C:/Users/Danne/raw_data/cubi_cusco/hub_01_02_bulk/counts_table_hub_01_02.csv")
+counts_table_hub_01_02 <- counts_table_hub_01_02[,-1] |> clean_names()
+counts_EC <- counts_table_hub_01_02 |> select(gene,sample_names_clean) |> filter(!is.na(gene))
+counts_mat <- counts_EC[,-1] |> as.matrix()
+colnames(counts_mat) <- sample_descriptors
+rownames(counts_mat) <- counts_EC$gene
+
+```
+
+## Bulk data, DESeq2
+
+```{r}
+col_tbl <- tibble(sample_descriptors) |> separate_wider_delim(sample_descriptors,delim = "_", too_few = "align_start", names = c("run", "cell_type","cell_line","dissociation","ETV_status")) |> mutate(libraries=sample_names_clean) |> 
+  mutate(ETV_status=ifelse(is.na(ETV_status),"ETV_norm","ETV_overexpressed"))|> as.data.frame()
+col_tbl |> kable()
+rownames(col_tbl) <- sample_descriptors
+
+
+```
+
+Contrasts can be applied only to factors with 2 or more levels.
+Testing ETV2-overexpressed samples against non-overexpressed samples will be confounded both by celltype and by dissocation method.
+
+```{r}
+dds <- DESeqDataSetFromMatrix(countData = counts_mat,
+                              colData = col_tbl,
+                              design= ~ ETV_status )
+dds <- DESeq(dds)
+#resultsNames(dds) # lists the coefficients
+res <- results(dds, name="ETV_status_ETV_overexpressed_vs_ETV_norm")
+
+sig_threshold <- 0.05
+fc_threshold <- 1
+
+res$negLogP <- -log10(res$pvalue)
+res_tbl <- res |> as_tibble(rownames="gene") |> 
+  mutate(
+    significance = case_when(
+      pvalue < sig_threshold & abs(log2FoldChange) > fc_threshold ~ "Significant",
+      TRUE ~ "Not Significant"
+    )
+  )
+```
+
+
+------------------------------------------------------------------------
+
+```{r}
+# Volcano plot
+res_tbl |> 
+  mutate(significance=ifelse(significance=="IL1RAP", "IL1RAP",significance)) |> 
+  mutate(significance=ifelse(significance=="ETV2", "ETV2",significance)) |> 
+ggplot( aes(x = log2FoldChange, y = negLogP, color = significance, label = gene)) +
+  geom_point(alpha = 0.7, size = 3) +
+  geom_text(data = subset(res_tbl, gene %in% c("IL1RAP","ETV2")), aes(label = gene, colour = gene), vjust = -1, size = 5) +
+  geom_point(data = subset(res_tbl, gene %in% c("IL1RAP","ETV2")), 
+             aes(x = log2FoldChange, y = negLogP, label = gene, color=gene))+
+  geom_vline(xintercept = c(-fc_threshold, fc_threshold), linetype = "dashed") +
+  geom_hline(yintercept = -log10(sig_threshold), linetype = "dashed") +
+  scale_color_manual(values = c("Significant" = "grey", "Not Significant" = "gray","IL1RAP"="green", "ETV2"="red")) +
+  labs(title = "ETV_overexpressed vs. norm", x = "Log2 Fold Change", y = "-Log10(p-value)") +
+  theme_minimal()
+```
+
+```{r}
+res_tbl |> filter(gene== "IL1RAP") |> kable()
+```
+
+
+
+```{r}
+res_il1rap <- res_tbl %>% filter(gene == "IL1RAP")
+rank_tbl <- res_tbl |>  filter(gene=="IL1RAP") |> bind_rows(slice_sample(res_tbl,n=10000)) |> 
+  mutate(highlight=ifelse(gene=="IL1RAP", "IL1RAP","other")) |> 
+  mutate(rank=rank(baseMean))
+
+ggplot() +
+  geom_point(data=rank_tbl,aes(rank, log10(baseMean),colour = highlight))+
+  geom_point(data=rank_tbl %>% filter(gene == "IL1RAP"), aes(rank, log10(baseMean)), color="red")+
+  theme_minimal()+
+  ggtitle("Log-BaseMean vs gene expression rank")
+```

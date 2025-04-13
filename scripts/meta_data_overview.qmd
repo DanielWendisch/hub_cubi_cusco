@@ -1,0 +1,282 @@
+---
+title: "meta data overview"
+format: html
+editor: visual
+---
+
+
+```{r}
+# https://nrennie.rbind.io/blog/creating-flowcharts-with-ggplot2/
+
+
+library("googlesheets4")
+library(here)
+library(tidyverse)
+library(tidygraph)
+library(igraph)
+library(janitor)
+library(ggraph)
+library(ggflowchart)
+library(janitor)
+library(patchwork)
+raw_data_path <- here("..", "..", "raw_data", "cubi_cusco")
+
+```
+
+## New sample names 20
+
+```{r}
+VFV_3p <- read_tsv(here(raw_data_path, "meta_data", "2025-03-26_Valerias_SODAR_draft", "a_HUB_model_characterisation_GEX_3pseq_transcription_profiling_VFV.txt"))
+VFV_polya <- read_tsv(here(raw_data_path, "meta_data", "2025-03-26_Valerias_SODAR_draft", "a_HUB_model_characterisation_GEX_polyA_transcription_profiling_VFV.txt"))
+VFV_sc <- read_tsv(here(raw_data_path, "meta_data", "2025-03-26_Valerias_SODAR_draft", "a_HUB_model_characterisation_GEX_sc_transcription_profiling_VFV.txt")) 
+s_HUB_model_characterisation <- read_tsv(here(raw_data_path,"2023_CUSCO_HUB_2025-03-25_2","s_HUB_model_characterisation.txt"))
+
+VFV_sc_gex <- VFV_sc[VFV_sc[,6]=="Gene Expression",]
+
+```
+
+##covariates from names
+
+```{r}
+covariates_sc <- VFV_sc_gex |> clean_names() |> select(sample_name, extract_name,parameter_value_fastq_prefix) |>
+  #select("Sample Name") |> 
+  separate_wider_delim(cols = "sample_name", delim = "_",
+                       names = c("run","cell_type",
+                                 "cell_line","d","e"),
+                       too_few = "align_start",too_many = "merge",cols_remove = FALSE) |>
+  mutate(assay="sc")
+
+covariates_polya <- VFV_polya |> clean_names() |> select(sample_name, extract_name_18) |> rename(extract_name=extract_name_18) |> 
+  #select("Sample Name") |> 
+  separate_wider_delim(cols = "sample_name", delim = "_",
+                       names = c("run","cell_type",
+                                 "cell_line","d","e"),
+                       too_few = "align_start",too_many = "merge",cols_remove = FALSE) |>
+  mutate(assay="polya")
+
+covariates_3p <- VFV_3p |> clean_names() |> select(sample_name, extract_name_18) |> rename(extract_name=extract_name_18) |> 
+  #select("Sample Name") |> 
+  separate_wider_delim(cols = "sample_name", delim = "_",
+                       names = c("run","cell_type",
+                                 "cell_line","d","e"),
+                       too_few = "align_start",too_many = "merge",cols_remove = FALSE) |>
+  mutate(assay="3p")
+
+all_covariates_w_samplename <- bind_rows(covariates_sc,covariates_polya,covariates_3p)
+all_covariates <- all_covariates_w_samplename |> select(-sample_name)
+
+```
+
+
+```{r}
+covariates_clean_with_filesnames <- all_covariates_w_samplename |>
+  # filter(cell_type %in% c("Cardiomyocytes",
+  #                         "Hepatocytes",
+  #                         "Intestinal Organoids",
+  #                         "Endothelial cells",
+  #                         "Lung Organoids Alveolar"))|> 
+  mutate(d=str_replace_all(d, "\\(",""))|> 
+  mutate(d=str_replace_all(d, "\\)","")) |> 
+  mutate(d=str_replace_all(d, "\\ ","")) |> 
+  mutate(d=str_replace_all(d,
+                           c("-EC-P-008"="",
+                             "Pool-01"="Pool",
+                             "10X-hIO-007"="10X",
+                             "Pool-hIO-007"="Pool",
+                             "-KL-05"="",
+                             "-KL-006"="",
+                             "-KL-14"="",
+                             "-KL-23"="",
+                             "-KL-24"="",
+                             "-Agg-012"="",
+                             "LP-020"=""
+                             ))) |> 
+  mutate(d=str_replace_all(d,
+                           c("-hLOA-010"= "",
+                             "-AO-V1"="",
+                             "-hLOA-022"="",
+                             "-EC-ETV2-003"="-ETV2",
+                             "-hLOA-011-d7-V2"="-d7-V2",
+                             "-hLOA-011-0h-V2"="-0h-V2",
+                             "-hLOA-011-0h-AO-V2"="-0h-V2-AO",
+                           "hLOA-kit-021"="10x",
+                           "hLOA-"="10X",
+                           "hIO"="10X")))
+  
+
+# |> 
+#   mutate(e=str_replace_all(e,
+#                            c("_A"="",
+#                              "_B"="",
+#                              "_C"="",
+#                              "_D"=""
+#                              ))) |> 
+#   mutate(cell_line=as_factor(cell_line),
+#          cell_type=as_factor(cell_type),
+#          d=as_factor(str_replace_all(d,"10X","dissociated"))) 
+
+
+covariates_clean_with_filesnames |> filter(!(cell_type %in% c("CO", "NSCO"))) |>  write.csv(here("intermediate_data","meta_data", "2025-04-02_covariate_data_DW.csv"))
+covariates_clean_with_filesnames |> filter(cell_type %in% c("CO", "NSCO")) |>  write.csv(here("intermediate_data","meta_data", "2025-04-02_covariate_data_brain_DW.csv"))
+
+
+
+covariates_clean <- covariates_clean_with_filesnames |> select(run,cell_type,cell_line, d, e, assay)
+
+
+covariates_clean_with_filesnames |> filter(!(cell_type %in% c("CO", "NSCO"))) 
+
+```
+
+
+```{r}
+#make sure second factor level enumeration (sub_codnditions) is a factor so that it is diplayed later
+covariates_clean_summerized <- covariates_clean |> 
+  group_by(cell_line,cell_type, assay,d) |> 
+  summarise(sub_conditions = str_c(unique(e), collapse = " "),.groups = "drop") |> 
+  mutate(sub_conditions=as_factor(replace_na(sub_conditions, "N")))
+
+sample_tiles <- function(x){x |> 
+#  group_by(cell_line,cell_type, d) |> 
+ # summarise(sub_conditions = str_c(unique(e), collapse = " "),.groups = "drop") |> 
+  ggplot(aes(cell_line, cell_type),position = position_dodge2(width=2, preserve="single")) +
+  geom_tile()+
+  geom_point(aes(colour = sub_conditions, shape = sub_conditions))+
+  facet_wrap(vars(d))+
+  theme_bw() +
+  theme(axis.title.x = element_blank(),  # remove x-axis title for top plots
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())+
+  scale_color_hue(drop = FALSE)+
+  scale_shape(drop = FALSE)
+  }
+  
+covariates_clean_summerized$sub_conditions |> levels()
+
+
+p_a <- covariates_clean_summerized |> 
+  unique() |> #remove Plex libraries |> 
+  filter(assay=="sc") |> 
+  sample_tiles()+
+  ylab("single-cell")
+p_b <- covariates_clean_summerized |> 
+  unique() |> #remove Plex libraries |> 
+  filter(assay=="polya") |> 
+  sample_tiles()+
+  ylab("poly-a")
+p_c <- covariates_clean_summerized |> 
+  unique() |> #remove Plex libraries |> 
+  filter(assay=="3p") |> 
+  sample_tiles()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  ylab("3p")
+
+(p_a + plot_spacer())/p_b/p_c + 
+  plot_layout(guides = "collect")
+  
+```
+```{r}
+covariates_clean_summerized |> filter(sc)
+```
+
+
+```{r}
+neighbor_pairs <- function(df) {
+  df %>%
+    rowwise() %>%
+    mutate(pairs = list(tibble(
+      x = as.character(c_across(everything())[-ncol(df)]),
+      y = as.character(c_across(everything())[-1])
+    ))) %>%
+    select(pairs) %>%
+    unnest(pairs)
+}
+
+
+
+# covariates_clean <- covariates_clean |> select(run,cell_type, d, e)
+
+covariates_clean_sc <- covariates_clean |> filter(assay=="sc")
+plot_list <- list()
+for (run_ in unique(covariates_clean_sc$run)) {
+  print(run_)
+  test <- covariates_clean_sc |>
+    filter(run == run_) %>% select(where(~ !all(is.na(.))))|> select(-run, -assay) |> 
+    neighbor_pairs()
+
+  test <- test |> drop_na()
+
+  graph <- as_tbl_graph(test, directed = TRUE) # Use FALSE for an undirected graph
+
+
+  ig <- as.igraph(graph)
+  root_node <- V(ig)[igraph::degree(ig, mode = "in") == 0]
+  depths <- igraph::distances(ig, v = root_node[1], to = V(ig))
+
+  graph_w_depth <- graph %>%
+    activate(nodes) %>%
+    mutate(depth = as.numeric(depths))
+
+  plot_list[[as.character(run_)]] <- ggraph(graph_w_depth, layout = "tree") +
+  geom_edge_link() +
+  geom_node_point(aes(size = depth, color = factor(depth))) +
+  geom_node_text(aes(label = name), repel = TRUE) +
+  theme_void()
+  
+  
+  # plot_list[[diff_type]] <- ggraph(graph_w_depth, layout = "dendrogram") +
+  #   geom_edge_diagonal() +
+  #   geom_node_point(aes(size = depth, color = factor(depth))) +
+  #   geom_node_text(aes(label = name), repel = TRUE) +
+  #   theme_void()
+}
+
+plot_list
+```
+
+
+
+```{r}
+# covariates_clean <- covariates_clean |> select(run,cell_type, d, e)
+
+covariates_clean_sc <- covariates_clean |> filter(assay=="polya")
+plot_list <- list()
+for (run_ in unique(covariates_clean_sc$run)) {
+  print(run_)
+  test <- covariates_clean_sc |>
+    filter(run == run_) %>% select(where(~ !all(is.na(.))))|> select(-run, -assay) |> 
+    neighbor_pairs()
+
+  test <- test |> drop_na()
+
+  graph <- as_tbl_graph(test, directed = TRUE) # Use FALSE for an undirected graph
+
+
+  ig <- as.igraph(graph)
+  root_node <- V(ig)[igraph::degree(ig, mode = "in") == 0]
+  depths <- igraph::distances(ig, v = root_node[1], to = V(ig))
+
+  graph_w_depth <- graph %>%
+    activate(nodes) %>%
+    mutate(depth = as.numeric(depths))
+
+  plot_list[[as.character(run_)]] <- ggraph(graph_w_depth, layout = "tree") +
+  geom_edge_link() +
+  geom_node_point(aes(size = depth, color = factor(depth))) +
+  geom_node_text(aes(label = name), repel = TRUE) +
+  theme_void()
+  
+  
+  # plot_list[[diff_type]] <- ggraph(graph_w_depth, layout = "dendrogram") +
+  #   geom_edge_diagonal() +
+  #   geom_node_point(aes(size = depth, color = factor(depth))) +
+  #   geom_node_text(aes(label = name), repel = TRUE) +
+  #   theme_void()
+}
+
+plot_list
+```
+
+
+
+

@@ -1,0 +1,76 @@
+---
+title: "Cibersortx prep"
+format: html
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+library(Seurat)
+library(Matrix)
+library(here)
+#library(tidyseurat)
+```
+
+```{r}
+dataset_name <- "hub_01"
+
+seurat_obj <- read_rds(paste0("intermediate_data/", dataset_name, "_integrated_", ".rds"))
+bulk_mtx <-  read_rds(paste0("intermediate_data/" , "bulk_mtx", "RNA", "counts" ,dataset_name,".rds"  ))
+```
+
+```{r}
+Idents(seurat_obj) <- "m_e_class"
+signature_mtx<- AggregateExpression(seurat_obj, assays = "uncorrected_RNA", slot="counts")[[1]] # these are the raw counts, checked
+
+```
+
+```{r}
+markers_tbl <- FindAllMarkers( seurat_obj, assay = "uncorrected_RNA", slot = "counts",only.pos = T, min.pct = 0.5) 
+
+markers <- markers_tbl |> group_by(cluster)|> slice_max(avg_log2FC, n = 300) |> pull(gene)
+
+top_markers_signature_tbl <- signature_mtx[markers,] |> as_tibble(rownames="gene")
+
+
+write_tsv(top_markers_signature_tbl, here("intermediate_data", "hub_01_top_300_m_e_markers_signature_for_cybersortx.txt") )
+
+# counts <- seurat_obj@assays$uncorrected_RNA@layers$counts[markers,]
+# 
+# GetAssayData(seurat_obj, assay = "uncorrected_RNA", slot = "counts")[markers,]
+rownames(bulk_mtx)
+
+```
+
+```{r}
+bulk_mtx <-  read_rds(here("intermediate_data" ,paste0( "bulk_mtx_", "RNA_", "counts_" ,dataset_name,".rds")  ))
+
+ensg_gene_mapping_vec <- read_rds(here("intermediate_data", "ensg_gene_mapping_vec.rds"))
+rownames(bulk_mtx) <- ensg_gene_mapping_vec[rownames(bulk_mtx)]
+
+
+intersect_markers <- intersect(rownames(bulk_mtx), markers)
+
+top_markers_bulk_tbl <- bulk_mtx[intersect_markers,] |> as_tibble(rownames="gene")
+
+top_markers_bulk_tbl |> write_tsv(here("intermediate_data", "hub_01_top_300_m_e_markers_bulk_for_cybersortx.txt") )
+
+```
+
+```{r}
+counts <- seurat_obj |> GetAssayData(assay = "uncorrected_RNA", slot = "counts")
+
+grouping <- seurat_obj@meta.data |> pull(m_e_class)
+colnames(counts) <- grouping
+
+
+intersect_counts <- counts[intersect_markers,] 
+intersect_counts <- intersect_counts |>as.matrix() 
+
+
+intersect_counts <- cbind( rownames(intersect_counts),intersect_counts)
+colnames(intersect_counts)[1] <- "gene"
+
+intersect_counts|> write.table(file = here("intermediate_data", "hub_01_top_300_m_e_markers_sc_mtx_for_cybersortx.txt"), sep = "\t", row.names = FALSE, col.names = TRUE, quote = FALSE)
+```
+

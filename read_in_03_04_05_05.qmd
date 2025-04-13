@@ -1,0 +1,55 @@
+---
+title: "read_in_03_04_05_05"
+format: html
+editor: visual
+---
+```{r}
+library(tidyverse)
+library("readxl")
+library("janitor")
+```
+
+```{r}
+raw_data_path <- here("..","..","raw_data","cubi_cusco")#raw_data sits in folder outside of project 
+
+
+a_meta_data <- read_tsv(here(raw_data_path,"a_GEX_SC_HUB-03-04-05-06.txt"))
+s_meta_data <- read_tsv(here(raw_data_path,"s_GEX_SC_HUB-03-04-05-06.txt"))
+```
+```{r}
+a_meta_data |> clean_names() |> pull(parameter_value_library_type) |> unique()
+
+a_meta_data |>
+  clean_names() |> 
+  mutate(sample_name=str_replace_all(sample_name,"_","-")) |> 
+  separate_wider_delim(delim = "-", cols = c("sample_name"), names = c("lib","type","tissue","rest"), too_many = "merge",too_few = "align_start") |> 
+  filter(type=="GEX") |> select(c("lib","type","tissue","rest","library_name"))
+
+
+a_meta_data |> clean_names() |> separate_wider_delim(parameter_value_fastq_prefix,
+                                                     delim = "_", cols = c("sample_name"),
+                                                     names = c("lib","type","tissue","rest"),
+                                                     too_many = "merge",too_few = "align_start")
+
+```
+
+```{r}
+s_meta_data
+```
+
+```{r}
+a_meta_data
+
+names(meta_data) <- meta_data[1,]
+meta_data <- meta_data[-1,]
+meta_data <- meta_data |> clean_names()
+
+meta_data <- meta_data |> select(name_4,name,name_2,experiment_identifier, tissue_type,rna_amount_ng,tapestation_qc_rin,perform_date_4,differentiation_duration, condition, treatment, treatment_duration)
+
+colnames(meta_data) <- c("sample","cell_line","name_2","experiment_identifier", "tissue_type","rna_amount_ng","tapestation_qc_rin","perform_date_4","differentiation_duration", "condition", "treatment", "treatment_duration"            )
+
+hub_01_meta_data_3p <- meta_data |> filter(experiment_identifier=="HUB_01")
+hub_01_02_meta_data_3p <- meta_data |> filter(experiment_identifier  %in% c("HUB_01", "HUB_02")) 
+
+```
+
