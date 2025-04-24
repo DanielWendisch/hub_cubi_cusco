@@ -6,8 +6,8 @@ format:
   html:
     embed-resources: true
 server: shiny
-
 ---
+
 
 ```{r setup}
 #| warning: false
@@ -30,17 +30,41 @@ library(forcats)
 library(DT)
 library(shiny)
 library(stringr)
+library(ape)
+library(here)
 
-########################################
-#adjust dataset here
-dataset_name <- "hub_01"
-#####################################
 
-source(paste0("scripts/", "QC_dashboard_",dataset_name,"_processing", ".R"))
+# ---- settings ----
+#adjust dataset and other settings here
+
+dataset_name <- "hub_10"
+
+output_dir <- here("output", paste(dataset_name,"QC_dashboard",Sys.Date(),sep = "_"))
+leiden_or_louvain <- "louvain"
+basic_cluster_name <- paste("RNA_clusters", leiden_or_louvain, "res0.8", sep="_")
+uncorrected_cluster_name <- paste("uncorrected_RNA_clusters", leiden_or_louvain, "res0.8", sep="_")
+
+
+
+# ---- source ----
+
+source(here("scripts",paste0("QC_dashboard_",dataset_name,"_processing", ".R")))
+
+
+
+# ---- functions ----
+#
+
 
 my_mad <- function(x, constant = 1) {
     median(abs(x - median(x, na.rm = TRUE)), na.rm = TRUE) * constant
 }
+
+plot_file_name <- function(index){paste(
+  dataset_name,
+  filter(plot_specs,list_int==index) |> pull(meta_data_column),
+  filter(plot_specs,list_int==index) |> pull(subtitle),
+  ".png",sep="_")}
 
 
 theme_1 <-   theme( plot.title = element_text(hjust = 0.5),
@@ -60,7 +84,7 @@ for (i in 1:nrow(plot_specs)) {
   
 }
 
-
+# ---- cell prob umap ----
 
 DefaultAssay(seurat_obj) <- "RNA"
 feature_plots <- list()
@@ -79,7 +103,7 @@ feature_plots[[21]] <- seurat_obj |>
           subtitle = "background corrected counts (cellbender)")
 
 
-######-------------------------------
+##############################################################
 
 seurat_obj[["percent_mito"]] <- PercentageFeatureSet(object = seurat_obj, pattern = "^MT-")
 
@@ -98,7 +122,7 @@ seurat_obj$"dead" <- ifelse(pull(seurat_obj,percent_mito)>upper_mito_thresh,"dea
 
 #Shiny
 #####
-# exp_data <- AggregateExpression(object =seurat_obj ,features =VariableFeatures(seurat_obj),group.by = "RNA_clusters_leiden_res0.8", assays = "RNA"  )
+# exp_data <- AggregateExpression(object =seurat_obj ,features =VariableFeatures(seurat_obj),group.by = basic_cluster_name, assays = "RNA"  )
 # exp_data <- as_tibble(t(exp_data[[1]]), rownames = "gene")
 # 
 # umap_centers <- as_tibble(seurat_obj@reductions$umap.RNA@cell.embeddings, rownames="gene") |>
@@ -111,7 +135,8 @@ seurat_obj$"dead" <- ifelse(pull(seurat_obj,percent_mito)>upper_mito_thresh,"dea
 
 
 # Calculate average expression for each gene in each cluster
-avg_exp <- AggregateExpression(object =seurat_obj ,features =VariableFeatures(seurat_obj),group.by = "RNA_clusters_leiden_res0.8", assays = "RNA"  )[[1]] #|> as_tibble(rownames="gene")
+colnames(seurat_obj@meta.data)[6] <- "RNA_clusters_louvain_res0.8"
+avg_exp <- AggregateExpression(object =seurat_obj ,features =VariableFeatures(seurat_obj),group.by = basic_cluster_name, assays = "RNA"  )[[1]] #|> as_tibble(rownames="gene")
 
 
 # Function to compute z-scores
@@ -132,6 +157,11 @@ cluster_zscore_data <- as_tibble(avg_exp_z)
 # Create the dot plot
 cluster_zscore_data <- as_tibble(avg_exp_z) |> mutate(cluster=str_replace_all(cluster,"g","") |> as.double())
 ``` 
+
+
+
+
+
 
 
 
@@ -168,7 +198,67 @@ selectInput('chosen_genes', "genes", sort(unique(cluster_zscore_data$gene)), mul
 
 ```
 
-# background correction
+
+
+
+
+
+
+# Pre-Filtering
+
+### Column {.tabset}
+```{r}
+p <- seurat_obj |>
+  ggplot(aes(log(rank(-nCount_RNA)),
+             nCount_RNA,color=vireo_snp_demux)) +
+  geom_point() +
+  # scale_x_log10(labels = scales::comma_format()) +
+  scale_y_log10() +
+  ylim(n_count_rna_plot_limits)+
+  ggplot2::annotation_logticks() +
+  ggplot2::theme_classic() 
+
+
+ggExtra::ggMarginal(p +
+                    theme(legend.position = "right") ,
+                    type = "histogram",
+                    groupColour = TRUE,
+                    groupFill = TRUE,
+                    size = 3,,
+                    margins = "y"))
+```
+
+
+```{r}
+p <- seurat_obj |>
+  filter(!is.na(vireo_snp_demux)) |> 
+  ggplot(aes(log(rank(-nCount_RNA)),
+             nCount_RNA,color=vireo_snp_demux)) +
+  geom_point() +
+  # scale_x_log10(labels = scales::comma_format()) +
+  scale_y_log10() +
+  ylim(n_count_rna_plot_limits)+
+  ggplot2::annotation_logticks() +
+  ggplot2::theme_classic() 
+
+
+ggExtra::ggMarginal(p +
+                    theme(legend.position = "right") ,
+                    type = "histogram",
+                    groupColour = TRUE,
+                    groupFill = TRUE,
+                    size = 3,,
+                    margins = "y"))
+```
+
+```
+
+
+
+
+# Background Correction
+
+
 
 ## Row {height="10%"}
 **`{r} dataset_content`**
@@ -181,92 +271,124 @@ selectInput('chosen_genes', "genes", sort(unique(cluster_zscore_data$gene)), mul
 
 ```{r}
 #| title: clusters
-dim_plots_list[[100]]
 
+
+index <- 100
+dim_plots_list[[index]]
+if (save_plot_as_png) {ggsave(here(output_dir,plot_file_name(index)), create.dir = TRUE)}
 ```
 
 ```{r}
 #| title: cell line
-dim_plots_list[[3]]
 
+index <- 3
+dim_plots_list[[index]]
+if (save_plot_as_png) {ggsave(here(output_dir,plot_file_name(index)))}
 ```
 
 ```{r}
 #| title: doublets & empty droplets
-dim_plots_list[[2]]
 
+
+index <- 2
+dim_plots_list[[index]]
+if (save_plot_as_png) {ggsave(here(output_dir,plot_file_name(index)))}
 ```
 
 
 ```{r}
 #| title: cell probability
-feature_plots[[1]] 
-
+ 
+index <- 1
+dim_plots_list[[index]]
+if (save_plot_as_png) {ggsave(here(output_dir,plot_file_name(index)))}
 ```
 
 ```{r}
 #| title: cluster sizes corrected
 
-seurat_obj |> ggplot(aes(RNA_clusters_leiden_res0.8,fill=cell_line_doublet_cellranger))+
+seurat_obj |> ggplot(aes(.data[[basic_cluster_name]],fill=cell_line_doublet_cellranger))+
 geom_bar()+
 theme_minimal()
 ```
 ```{r}
 #| title: clusters uncorrected
-dim_plots_list[[300]] 
 
+
+index <- 300
+dim_plots_list[[index]]
+if (save_plot_as_png) {ggsave(here(output_dir,plot_file_name(index)))}
 ```
 
 ### Column {.tabset}
 
 ```{r}
 #| title: clusters
-dim_plots_list[[200]]
 
+index <- 200
+dim_plots_list[[index]]
+if (save_plot_as_png) {ggsave(here(output_dir,plot_file_name(index)))}
 ```
 
 ```{r}
 #| title: cell line
-dim_plots_list[[23]]
 
-```
+index <- 23
+dim_plots_list[[index]]
+if (save_plot_as_png) {ggsave(here(output_dir,plot_file_name(index)))}
 
 ```{r}
 #| title: doublets & empty droplets
-dim_plots_list[[22]]
 
+index <- 22
+dim_plots_list[[index]]
+if (save_plot_as_png) {ggsave(here(output_dir,plot_file_name(index)))}
 ```
 
 
 ```{r}
 #| title: cell probability
-feature_plots[[21]] 
+
+index <- 21
+dim_plots_list[[index]]
+if (save_plot_as_png) {ggsave(here(output_dir,plot_file_name(index)))}
 
 ```
 
 ```{r}
 #| title: cluster sizes uncorrected
 
-seurat_obj |> ggplot(aes(uncorrected_RNA_clusters_leiden_res0.8,fill=cell_line_doublet_cellranger))+geom_bar() +theme_minimal()
-
+p <- seurat_obj |> ggplot(aes(.data[[uncorrected_cluster_name]],fill=cell_line_doublet_cellranger))+geom_bar() +theme_minimal()
+p
+if (save_plot_as_png) {ggsave(here(output_dir, paste0("histo_", p$labels$x,".png")))}
 ```
 # QC metrics, after background correction
 ## Row {height="50%"}
 ### Dimplots {.tabset}
+
+
 ```{r}
 #| title: exceeding mito %
 DefaultAssay(seurat_obj) <- "RNA"
-seurat_obj |> DimPlot(group.by = "dead", reduction = "umap.RNA")
+p <- seurat_obj |> DimPlot(group.by = "dead", reduction = "umap.RNA")
+p
+if (save_plot_as_png) {ggsave(here(output_dir, paste0("histo_",p$labels$title,".png")))}
 ```
+
 ```{r}
 #| title: freq. mito, corrected
 DefaultAssay(seurat_obj) <- "RNA"
-seurat_obj |> FeaturePlot("percent_mito", reduction = "umap.RNA", max.cutoff= 10) + ggtitle("percent mitochondrial reads, with backgr. correc.")
+p <-seurat_obj |> FeaturePlot("percent_mito", reduction = "umap.RNA", max.cutoff= 10) + ggtitle("percent mitochondrial reads, with backgr. correc.")
+p
+if (save_plot_as_png) {ggsave(here(output_dir, paste0("histo_",p$labels$title,".png")))}
 ```
+
 ```{r}
 #| title: freq. mito, uncorrected
 DefaultAssay(seurat_obj) <- "uncorrected_RNA"
-seurat_obj |> FeaturePlot("percent_mito", reduction = "umap.RNA", max.cutoff= 10) + ggtitle("percent mitochondrial reads, without backgr. correc.")
+p <-seurat_obj |> FeaturePlot("percent_mito", reduction = "umap.RNA", max.cutoff= 10) + ggtitle("percent mitochondrial reads, without backgr. correc.")
+p
+if (save_plot_as_png) {ggsave(here(output_dir, paste0("histo_",p$labels$title,".png")))}
 ```
 
 ### Column {.tabset}
@@ -288,14 +410,17 @@ guides(colour = guide_legend(override.aes = list(size=7)))+
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 
-ggExtra::ggMarginal(multiplet_n_count_RNA_n_Feature +theme(legend.position = "bottom") , type = "density", groupColour = TRUE, groupFill = TRUE,size = 3) 
+p <- ggExtra::ggMarginal(multiplet_n_count_RNA_n_Feature +theme(legend.position = "bottom") , type = "density", groupColour = TRUE, groupFill = TRUE,size = 3) 
+
+p
+if (save_plot_as_png) {ggsave(here(output_dir, paste0("histo_",p$labels$title,".png")))}
 
 ```
 
 ```{r}
 #| title: doublet quantile freq
 
-seurat_obj |> mutate(quantile_nCount_RNA = ntile(nCount_RNA,100)) |>  # Create groups in steps of 1000
+p <- seurat_obj |> mutate(quantile_nCount_RNA = ntile(nCount_RNA,100)) |>  # Create groups in steps of 1000
   group_by(quantile_nCount_RNA,singlet_doublet_cellranger) |> 
   summarise(n = n(), .groups = 'drop', min_nCount_RNA=min(nCount_RNA)) |> 
   group_by(quantile_nCount_RNA) |> 
@@ -310,7 +435,9 @@ seurat_obj |> mutate(quantile_nCount_RNA = ntile(nCount_RNA,100)) |>  # Create g
   scale_x_continuous(breaks = seq(0, max(seurat_obj$nCount_RNA, na.rm = TRUE), by = 2000))+
 theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
-  
+
+p
+if (save_plot_as_png) {ggsave(here(output_dir, paste0("histo_",p$labels$title,".png")))}
 ```
 
 ## Row {height="50%"}
@@ -328,29 +455,36 @@ theme_minimal() +
 #| title: freq. mito, Violin plot, corrected
 
 DefaultAssay(seurat_obj) <- "RNA"
-seurat_obj |> VlnPlot("percent_mito")
+p <- seurat_obj |> VlnPlot("percent_mito")
+
+p
+if (save_plot_as_png) {ggsave(here(output_dir, paste0("histo_",p$labels$title,".png")))}
 ```
 ```{r}
 #| title: nCountRNA Violin, corrected
 
 DefaultAssay(seurat_obj) <- "RNA"
-seurat_obj |> VlnPlot("nCount_RNA")
+p <- seurat_obj |> VlnPlot("nCount_RNA")
+p
+if (save_plot_as_png) {ggsave(here(output_dir, paste0("histo_",p$labels$title,".png")))}
 ```
 
 
 
 ```{r}
 #| title: mito density by cellline
-mt_mad_tbl |> ggplot(aes(percent_mito, cell_line_doublet_cellranger, fill = dead_by_mad)) + geom_density_ridges()+ theme(axis.text.x = element_text(angle = 45, hjust=1)) +
+p <- mt_mad_tbl |> ggplot(aes(percent_mito, cell_line_doublet_cellranger, fill = dead_by_mad)) + geom_density_ridges()+ theme(axis.text.x = element_text(angle = 45, hjust=1)) +
   xlim(0,20)+
   theme_minimal()
+p
+if (save_plot_as_png) {ggsave(here(output_dir, paste0("histo_",p$labels$title,".png")))}
 ```
 
 ```{r}
 #| title: nCountRNA histograms
 
 
-seurat_obj |> ggplot(aes(nCount_uncorrected_RNA,  fill = cell_line_doublet_cellranger))  +
+p <- seurat_obj |> ggplot(aes(nCount_uncorrected_RNA,  fill = cell_line_doublet_cellranger))  +
   geom_histogram(bins = 200)+
   theme(axis.text.x = element_text(angle = 45, hjust=1))+
   facet_wrap(~cell_line_doublet_cellranger,ncol = 1 )+
@@ -358,7 +492,8 @@ seurat_obj |> ggplot(aes(nCount_uncorrected_RNA,  fill = cell_line_doublet_cellr
 xlim(0,70000) +
   theme_minimal()
 
-
+p
+if (save_plot_as_png) {ggsave(here(output_dir, paste0("histo_",p$labels$title,".png")))}
 ```
 
 ### Column {.tabset}
@@ -369,7 +504,7 @@ xlim(0,70000) +
 
 filtered_seurat_obj <- seurat_obj |>
   filter(
-    !(RNA_clusters_leiden_res0.8 %in% deleted_clusters) &
+    !(.data[[basic_cluster_name]] %in% deleted_clusters) &
       nCount_RNA < upper_nCount_RNA_thresh &
       nCount_RNA > lower_nCount_RNA_thresh &
       percent_mito < upper_mito_thresh &
@@ -377,17 +512,21 @@ filtered_seurat_obj <- seurat_obj |>
       cellbender_prob_to_be_cell> 0.99) 
     
 write_rds(filtered_seurat_obj,
-          paste0("intermediate_data\\",dataset_name,"_filtered_seurat_obj.rds") )
+          here("intermediate_data", paste0(dataset_name,"_filtered_seurat_obj.rds")) )
 
-filtered_seurat_obj |> DimPlot( reduction = "umap.RNA",label = T, group.by = "RNA_clusters_leiden_res0.8")
+p <- filtered_seurat_obj |> DimPlot( reduction = "umap.RNA",label = T, group.by = basic_cluster_name)
 
+p
+if (save_plot_as_png) {ggsave(here(output_dir, paste0("histo_",p$labels$title,".png")))}
 ```
 
 ```{r}
 #| title: not filtered
 
-seurat_obj |> DimPlot( reduction = "umap.RNA",label = T, group.by = "RNA_clusters_leiden_res0.8")
+p <- seurat_obj |> DimPlot( reduction = "umap.RNA",label = T, group.by = basic_cluster_name)
 
+p
+if (save_plot_as_png) {ggsave(here(output_dir, paste0("histo_",p$labels$title,".png")))}
 ```
 
 # gene level
@@ -397,30 +536,36 @@ seurat_obj |> DimPlot( reduction = "umap.RNA",label = T, group.by = "RNA_cluster
 ### column 
 ```{r}
 #| title: "Cluster Tree"
-Idents(seurat_obj) <- "RNA_clusters_leiden_res0.8"
+Idents(seurat_obj) <- basic_cluster_name
 seurat_obj <- BuildClusterTree(seurat_obj,
                                reduction=pca.RNA,
                                slot="counts" )
 aggregated <- AggregateExpression(seurat_obj,
-                                  group.by="RNA_clusters_leiden_res0.8",
+                                  group.by=basic_cluster_name,
                                   assays="RNA")
 
-PlotClusterTree(seurat_obj,
+p <- PlotClusterTree(seurat_obj,
                 direction = "downwards")
+if (save_plot_as_png) {ggsave(here(output_dir, paste0("histo_",p$labels$title,".png")))}
 ```
 
 ### column {.tabset}
 ```{r}
 #| title: "Unfiltered, background corrected"
-Idents(seurat_obj) <- "RNA_clusters_leiden_res0.8"
+
+Idents(seurat_obj) <- basic_cluster_name
 DefaultAssay(seurat_obj) <- "RNA"
-DimPlot(seurat_obj, label=T) 
-```
+p <- DimPlot(seurat_obj, label=T) 
+p
+if (save_plot_as_png) {ggsave(here(output_dir, paste0("histo_",p$labels$title,".png")))}
+```}
 
 ```{r}
 #| title: filtered by user
 
-filtered_seurat_obj |> DimPlot( reduction = "umap.RNA",label = T, group.by = "RNA_clusters_leiden_res0.8")
+p <- filtered_seurat_obj |> DimPlot( reduction = "umap.RNA",label = T, group.by = basic_cluster_name)
+p
+if (save_plot_as_png) {ggsave(here(output_dir, paste0("histo_",p$labels$title,".png")))}
 ```
 
 ## Row 
@@ -428,6 +573,7 @@ filtered_seurat_obj |> DimPlot( reduction = "umap.RNA",label = T, group.by = "RN
 ### Column
 ```{r}
 plotOutput('dot_plot')
+
 ```
 
 ### Column
@@ -435,7 +581,7 @@ plotOutput('dot_plot')
 ```{r}
 #| title: Differentially expressed genes
 
-de_genes_tbl <- read_rds("output/QC_cluster_markers_min.pct_0.4_logfc.threshold_0.25_max.cells.per.ident_300.rds") |> select(cluster, gene, p_val, avg_log2FC, pct.1, pct.2, p_val_adj) |> group_by(cluster) |> slice_min(p_val, n=50)
+de_genes_tbl <- read_rds(here("output","QC_cluster_markers_min.pct_0.4_logfc.threshold_0.25_max.cells.per.ident_300.rds")) |> select(cluster, gene, p_val, avg_log2FC, pct.1, pct.2, p_val_adj) |> group_by(cluster) |> slice_min(p_val, n=50)
 
 de_genes_tbl |> mutate(cluster=as_factor(cluster)) |>
   relocate(cluster) |> 
@@ -452,6 +598,7 @@ de_genes_tbl |> mutate(cluster=as_factor(cluster)) |>
 
 #plotOutput("dot_plot")
 ```
+
 ```{r}
 #| context: server
 
@@ -477,6 +624,5 @@ p <- ggplot(dataset(), aes(x = factor(cluster), y = gene)) +
 
 p
 })
-
 
 ```

@@ -1,0 +1,54 @@
+---
+title: "explore_hub_10"
+format: 
+  html:
+    code-fold: true
+    embed-resources: true
+editor: visual
+---
+```{r}
+library(Seurat)
+library(BPCells)
+library(tidyverse)
+library(tidyseurat)
+library(here)
+dataset_name <- "hub_10"
+```
+
+```{r}
+seurat_obj <- read_rds(here("intermediate_data",paste0("QC_dataset_setup_" ,dataset_name,".rds")))
+seurat_obj@reductions |> print()
+```
+
+```{r}
+dat <- open_matrix_dir(dir = here("BPcell_matrices", paste0(" ",dataset_name))) ### change!!! formatting error
+reads_per_cell <- dat |> colSums()
+plot_read_count_knee(reads_per_cell, cutoff = 1e3)
+
+tibble(nCount_RNA=seurat_obj$nCount_RNA) |>
+  ggplot(aes(log(rank(-nCount_RNA)), nCount_RNA)) +
+  geom_point()
+```
+
+```{r}
+seurat_obj |> DimPlot()
+seurat_obj |> DimPlot(group.by = "cell_line_doublet_cellranger") 
+seurat_obj |> DimPlot(group.by = "cell_line_doublet_cellranger", reduction = "umap.RNA")
+
+```
+
+```{r}
+seurat_obj |> VlnPlot("nCount_RNA", group.by = "cell_line_doublet_cellranger", pt.size = 0)+ NoLegend()
+```
+### Filter out "no cells"
+
+```{r}
+filtered_seurat_obj <- seurat_obj |> filter(cell_line_cellranger != "no cell")
+
+filtered_seurat_obj |> DimPlot(group.by = "cell_line_doublet_cellranger")
+filtered_seurat_obj |> DimPlot(group.by = "cell_line_doublet_cellranger", reduction = "umap.RNA")
+
+filtered_seurat_obj|> VlnPlot("nCount_RNA", group.by = "cell_line_doublet_cellranger", pt.size = 0)
+
+```
+
