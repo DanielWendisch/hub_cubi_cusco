@@ -1,0 +1,37 @@
+---
+title: "hub_10_master"
+format: html
+editor: visual
+---
+
+
+```{r}
+library(here)
+library(tidyverse)
+calc_bp_cells <- TRUE
+add_vireo <- TRUE
+leiden_or_louvain <- "louvain"
+basic_cluster_name <- paste("clusters", leiden_or_louvain, "res0.8", sep="_")
+basic_cluster_name_2 <- paste("clusters", leiden_or_louvain, "res0.4", sep="_")
+dataset_name <- "hub_10"
+counts_per_cell_pre_filter <- 50 # QC_setup.R
+```
+
+
+```{r}
+#| echo: false
+
+path_raw_data_file <- here("..","..","raw_data","cubi_cusco")
+
+path_cellranger_output_dir <- here( path_raw_data_file, "cellranger" , paste0(dataset_name, "_outs"),"multi")
+path_cellbender_output_dir <- here(path_raw_data_file, "cellbender",dataset_name)
+path_vireo_output_dir <- here(path_raw_data_file, "vireo")
+
+resolution_clustering_1 <- 0.8
+resolution_clustering_2 <- 0.2
+dim_number_pca_and_neighbors <- 15
+
+source(here("scripts", "QC_setup.R" ))
+
+```
+
