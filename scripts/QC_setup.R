@@ -76,22 +76,26 @@ library(patchwork)
 # set paths for dataset-associated files
 ### ----------------------------------------------------------------------------------------------------
 
+## set hashtag conversion
+#TODO move these fully to master script
+
+# convert_vector <- c("CMO301"= "hLOA_BIHi001-B",
+#                     "CMO302"= "hLOA_BIHi005-A",
+#                     "CMO303"= "hLOA_BIHi250-A",
+#                     "CMO304"= "hLOA_UCSFi001-A")
 
 
-path_cellranger_output <- here( path_cellranger_output_dir,"count","raw_feature_bc_matrix.h5")
-path_cellbender_output <- here(path_cellbender_output_dir,paste0(dataset_name, "_cellbender_corrected_filtered_seurat.h5"))
-path_vireo_output <-  here(path_vireo_output_dir, paste0(dataset_name,"_vireo_donor_ids.tsv"))
+#TODO move these fully to master script
+# path_cellranger_output <- here( path_cellranger_output_dir,"count","raw_feature_bc_matrix.h5")
+# path_cellbender_output <- here(path_cellbender_output_dir,paste0(dataset_name, "_cellbender_corrected_filtered_seurat.h5"))
+# path_vireo_output <-  here(path_vireo_output_dir, paste0(dataset_name,"_vireo_donor_ids.tsv"))
 
 #read-in csv
 tag_calls_summary <- read_csv(here(path_cellranger_output_dir,"multiplexing_analysis","tag_calls_summary.csv"))
 tag_calls_per_cell <- read_csv(here(path_cellranger_output_dir,"multiplexing_analysis","tag_calls_per_cell.csv"))
 assignment_confidence_table <- read_csv(here(path_cellranger_output_dir,"multiplexing_analysis","assignment_confidence_table.csv"))
 
-## set hashtag conversion
-convert_vector <- c("CMO301"= "hLOA_BIHi001-B",
-                    "CMO302"= "hLOA_BIHi005-A",
-                    "CMO303"= "hLOA_BIHi250-A",
-                    "CMO304"= "hLOA_UCSFi001-A")
+
 
 
 
@@ -325,7 +329,6 @@ seurat_obj[["percent_mito"]] <- PercentageFeatureSet(object = seurat_obj, patter
 
 
 
-write_rds(seurat_obj, here("intermediate_data",paste0("QC_dataset_setup_", dataset_name  ,".rds")))
 
 ### -----------------------------------------------------------------------------------------------------
 

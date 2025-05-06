@@ -154,7 +154,8 @@ plot_list_cellbender_cells[["dimplot_cellranger"]] <- seurat_obj |> DimPlot(grou
 #normal ggplots
 
 plot_list_grob <- map(plot_list_cellbender_cells, ~ ggplotGrob((.x)))
-plot_list_grob |> write_rds(here("output", "hub_10","plot_list_grob.rds"))
+
+
 
 ###
 #remove enviornemt liks from ggplot
@@ -163,9 +164,10 @@ plot_list_grob |> write_rds(here("output", "hub_10","plot_list_grob.rds"))
 
 ####
 # ggextra as.ggplots
-plotified_ggextra_plot_list_cellbender_cells <- map(ggextra_plot_list_cellbender_cells, ~ ggplotGrob((.x)))
+plotified_ggextra_plot_list_cellbender_cells <- map(ggextra_plot_list_cellbender_cells, ~ as.grob((.x)))
 
-plotified_ggextra_plot_list_cellbender_cells |>  write_rds(here("output", "hub_10","plotified_plot_list_grob.rds"))
+
+
 
 
 
