@@ -48,7 +48,7 @@ seurat_obj$"dead" <- ifelse(pull(seurat_obj,
 
 
 
-###################3
+----
 # METADATA cellranger dead
 seurat_obj$"dead" <- ifelse(pull(seurat_obj,
                                  percent_mito) > upper_mito_thresh,"dead","alive")

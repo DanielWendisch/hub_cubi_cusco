@@ -40,7 +40,7 @@
 # set to calc_bp_cells to TRUE if BPCells matrices should be recalculated and saved
 
 
-### ----------------------------------------------------------------------------------------------------
+### libraries----------------------------------------------------------------------------------------------------
 #renv::use_python()
 library(reticulate)
 library(readr)
@@ -64,17 +64,9 @@ library(patchwork)
 # plan()
 
 #renv::use_python(type="auto")
-### ----------------------------------------------------------------------------------------------------
 
-
-
-
-
-
-
-
-# set paths for dataset-associated files
-### ----------------------------------------------------------------------------------------------------
+### set paths for dataset-associated files 
+#----------------------------------------------------------------------------------------------------
 
 ## set hashtag conversion
 #TODO move these fully to master script
@@ -85,19 +77,15 @@ library(patchwork)
 #                     "CMO304"= "hLOA_UCSFi001-A")
 
 
-#TODO move these fully to master script
-# path_cellranger_output <- here( path_cellranger_output_dir,"count","raw_feature_bc_matrix.h5")
-# path_cellbender_output <- here(path_cellbender_output_dir,paste0(dataset_name, "_cellbender_corrected_filtered_seurat.h5"))
-# path_vireo_output <-  here(path_vireo_output_dir, paste0(dataset_name,"_vireo_donor_ids.tsv"))
+# input data fiels, dir paths specified in master
+path_cellranger_output <- here( path_cellranger_output_dir,"count","raw_feature_bc_matrix.h5")
+path_cellbender_output <- here(path_cellbender_output_dir,paste0(dataset_name, "_cellbender_corrected_filtered_seurat.h5"))
+path_vireo_output <-  here(path_vireo_output_dir, paste0(dataset_name,"_vireo_donor_ids.tsv"))
 
 #read-in csv
 tag_calls_summary <- read_csv(here(path_cellranger_output_dir,"multiplexing_analysis","tag_calls_summary.csv"))
 tag_calls_per_cell <- read_csv(here(path_cellranger_output_dir,"multiplexing_analysis","tag_calls_per_cell.csv"))
 assignment_confidence_table <- read_csv(here(path_cellranger_output_dir,"multiplexing_analysis","assignment_confidence_table.csv"))
-
-
-
-
 
 path_bp_cells_cellranger <- here("BPcell_matrices", paste0("cellranger_", dataset_name))
 path_bp_cells_cellranger_cmo <- here("BPcell_matrices", paste0("cellranger_cmo_", dataset_name))
@@ -148,7 +136,8 @@ if (calc_bp_cells) {
 
   dat_cellbender <- Read10X_h5(filename = path_cellbender_output, unique.features = TRUE)
 
-  write_matrix_dir(dat_cellbender$`Gene Expression`,path_bp_cells_cellbender, overwrite = T)
+  write_matrix_dir(dat_cellbender,#$`Gene Expression`,
+                   path_bp_cells_cellbender, overwrite = T) # TODO harmomize between dataset $Gene expression
 }
 #############################################################################################
 
@@ -173,24 +162,25 @@ dat_cmo <- open_matrix_dir(dir = path_bp_cells_cellranger_cmo)
 ###
 rna_reads_per_cell <- dat_ranger |> colSums()
 
-plot_read_count_knee(rna_reads_per_cell, cutoff = 2e3)+
+knee_plot_rna <- plot_read_count_knee(rna_reads_per_cell, cutoff = 2e3)+
   plot_read_count_knee(rna_reads_per_cell, cutoff = 1e3)+
   plot_read_count_knee(rna_reads_per_cell, cutoff = 5e2)+
   plot_read_count_knee(rna_reads_per_cell, cutoff = 1e2)+
   plot_annotation(title="RNA reads per cell")
 
-ggsave(filename = here("output/",dataset_name, c(paste0(dataset_name,"_read_count_knee.png"))), width = 22)
-
 
 cmo_reads_per_cell <- dat_cmo |> colSums()
 
-plot_read_count_knee(cmo_reads_per_cell, cutoff = 2e3)+
+knee_plot_cmo <- plot_read_count_knee(cmo_reads_per_cell, cutoff = 2e3)+
   plot_read_count_knee(cmo_reads_per_cell, cutoff = 1e3)+
   plot_read_count_knee(cmo_reads_per_cell, cutoff = 5e2)+
   plot_read_count_knee(cmo_reads_per_cell, cutoff = 1e2)+
   plot_annotation(title="hashtag reads per cell")
 
-ggsave(filename = here("output/",dataset_name, c(paste0(dataset_name,"_hashtag_count_knee.png"))), width = 22)
+
+###
+ggsave(knee_plot_rna, filename = here("output",dataset_name, "qc_process", "plots_and_plot_data", paste(dataset_name ,"rna_read_count_knee.png", sep = "_")))
+ggsave(knee_plot_cmo, filename = here("output",dataset_name,"qc_process", "plots_and_plot_data", paste(dataset_name ,"hashtag_read_count_knee.png", sep = "_")))
 
 
 ############ #inital trimming of data
@@ -224,7 +214,7 @@ dat_cmo <- NULL
 gc()
 
 
-### VIREO ---------------------------------------------------------------------------------------------------------
+### vireo ---------------------------------------------------------------------------------------------------------
 
 
 if (add_vireo) {
@@ -241,9 +231,15 @@ if (add_vireo) {
                             vireo_ids_vec) 
   
   #seurat_obj <- seurat_obj |> filter(vireo_snp_demux  %in% c("donor0","donor1","donor2","donor3"))
+  
+  seurat_obj <- seurat_obj |> mutate(vireo=case_when(vireo_snp_demux == "unassigned" ~ "vireo.unassigned" ,
+                         is.na(vireo_snp_demux) ~ "vireo.no data",
+                         TRUE ~ "vireo.cell"))
+} else { # some weird error when using else
+  seurat_obj$vireo <- "not_computed"
+  seurat_obj$vireo_snp_demux <- "not_computed"
+  
 }
-  
-  
 
 
 
@@ -294,9 +290,10 @@ seurat_obj <- AddMetaData(seurat_obj, cell_barcodes)
 
 
 
-############# add cellbender cell probabilities
+### add cellbender cell probabilities ----
+#--------------------------------------------------------
 
-corrected <- H5Fopen(here(path_raw_data_file,"cellbender","hub_10","hub_10_cellbender_corrected.h5"))
+corrected <- H5Fopen(here(path_cellbender_output_dir, paste0(dataset_name,"_cellbender_corrected.h5")))
 cell_prob_tbl <- tibble(
   cell = corrected$metadata$barcodes_analyzed,
   cell_probability = corrected$droplet_latents$cell_probability)
@@ -316,20 +313,24 @@ seurat_obj <- AddMetaData(seurat_obj, col.name = "cellbender_prob_to_be_cell", c
 # METADATA cellranger
 
 seurat_obj <- seurat_obj |> 
-  mutate(cellbender_p95=if_else(cellbender_prob_to_be_cell>0.95,"cellbender.higher0.95","cellbender.lower0.95")) |> 
-  mutate(vireo=case_when(vireo_snp_demux == "unassigned" ~ "vireo.unassigned" ,
-                         is.na(vireo_snp_demux) ~ "vireo.no data",
-                         TRUE ~ "vireo.cell")) |> 
-  mutate(cellranger=paste("cellranger",singlet_doublet_cellranger,sep="."))
+  mutate(cellbender_p95=if_else(cellbender_prob_to_be_cell > 0.95, "cellbender.higher0.95" , "cellbender.lower0.95")) |> 
+
+  mutate(cellranger=paste("cellranger", singlet_doublet_cellranger, sep="."))
 
 # METADATA cellranger percent_mito
-seurat_obj[["percent_mito"]] <- PercentageFeatureSet(object = seurat_obj, pattern = "^MT-")
+seurat_obj[["percent_mito"]] <- PercentageFeatureSet(object = seurat_obj, pattern = "^MT-", assay = "RNA")
 
 
 
+seurat_obj@misc$filtering_steps <- list()
+seurat_obj@misc$filtering_steps$qc_setup <-paste("counts_per_cell_pre_filter >" ,as.character(counts_per_cell_pre_filter))
+
+
+seurat_obj$organoid <-  seurat_obj |> separate(cell_line_cellranger, sep = "_", into = "organoid")|> pull(organoid)
+
+seurat_obj$cell_line <-  seurat_obj |> separate(cell_line_cellranger, sep = "_", into = c("organoid", "cell_line")) |> pull(cell_line)
 
 
 
-### -----------------------------------------------------------------------------------------------------
 
 

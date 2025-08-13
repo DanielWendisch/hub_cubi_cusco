@@ -4,6 +4,7 @@ format: html
 editor: visual
 ---
 
+# Intro
 
 ```{r libraries and initial variables}
 library(here)
@@ -12,97 +13,194 @@ library(quarto)
 library(Seurat)
 library(tidyseurat)
 
+
+# variables shared in  whole workflow, meaning setup and fitlering steps
 dataset_name <- "hub_10"
-
-source(here("scripts","functions.R"))
-calc_bp_cells <- TRUE
-add_vireo <- TRUE
 leiden_or_louvain <- "louvain"
-basic_cluster_name <- paste("RNA_", "clusters", leiden_or_louvain, "res0.8", sep="_")
-basic_cluster_name_2 <- paste("clusters", leiden_or_louvain, "res0.4", sep="_")
+source(here("scripts","functions.R"))
+#basic_cluster_name <- paste("RNA_", "clusters", leiden_or_louvain, "res0.8", sep="_")
+#basic_cluster_name_2 <- paste("clusters", leiden_or_louvain, "res0.4", sep="_")
 
-paste(assay_iter, basic_cluster_name_2,sep = "_")
-clustering_larger_RNA = paste("RNA", basic_cluster_name,sep = "_"
-                     
-                     
-                     
+# Paths
 
-counts_per_cell_pre_filter <- 50 # QC_setup.R
+path_intermediate_data_root <- here("intermediate_data", dataset_name, "qc_process")
+path_output_root <- here("output", dataset_name, "qc_process")
+path_output_plots_root <- here(path_output_root,"plots_and_plot_data")
+path_output_dashboards <- here(path_output_root,"dashboards")
+
+## seurat objects
+
+make_path_seurat_object <- function(step, dataset=dataset_name){
+    path_seurat_obj<- here(path_intermediate_data_root,
+                                 paste("seurat_obj",
+                                        step,
+                                        dataset,
+                                        "rds",
+                                       sep = "."))
+    return(path_seurat_obj)
+  
+}
+
+
+here("intermediate_data",paste0("filtered_1_", dataset_name  , ".rds"))
+
+
+dir.create(path_output_plots_root,recursive = T)
+dir.create(path_intermediate_data_root,recursive = T)
+dir.create(path_output_dashboards, recursive = T)
 ```
 
 # QC setup
 
 ```{r QC setup}
 #| echo: false
+step_no <- "0_setup"
+dir.create(here("intermediate_data", dataset_name, "setup"),recursive = T)
+dir.create(here("output", dataset_name, "setup"),recursive = T)
 
+
+
+
+#ACCTUAL VARIABLES of QC_setup.R
+# TODO decide wether to make this consitent by adding a meta data cloumn name but with NA, or "not computed" 
+add_vireo <- TRUE # wether to add SNP based demultiplexing conducted with vireo to dataset
+calc_bp_cells <- FALSE # FALSE if previous computation shiuld be used
+
+convert_vector <- c("CMO301"= "hLOA_BIHi001-B",
+                    "CMO302"= "hLOA_BIHi005-A",
+                    "CMO303"= "hLOA_BIHi250-A",
+                    "CMO304"= "hLOA_UCSFi001-A")
+
+#ACCTUAL VARIABLES of basic_seurat_processing.R
+resolution_clustering_1 <- 0.8
+resolution_clustering_2 <- 0.2
+dim_number_pca_and_neighbors <- 15
+
+
+
+# TODO where are these specified?
+#naming convention of clusters, probably more needed @ plot generation because the names follow from the clustering and the assays
+#moved this to plot specs qc, is it somehwere else?
+clustering_fine_RNA <- paste("RNA", "clusters", leiden_or_louvain, "res." , resolution_clustering_1, sep = "_")
+clustering_rough_RNA <- paste("RNA", "clusters", leiden_or_louvain, "res." , resolution_clustering_2, sep = "_")
+clustering_fine_cellbender <- paste("cellbender_RNA", "clusters", leiden_or_louvain, "res." , resolution_clustering_1, sep = "_")
+clustering_rough_cellbender <- paste("cellbender_RNA", "clusters", leiden_or_louvain, "res." , resolution_clustering_2, sep = "_")
+
+
+# Directories paths of Raw data
 path_raw_data_file <- here("..","..","raw_data","cubi_cusco")
-
 path_cellranger_output_dir <- here( path_raw_data_file, "cellranger" , paste0(dataset_name, "_outs"),"multi")
 path_cellbender_output_dir <- here(path_raw_data_file, "cellbender",dataset_name)
 path_vireo_output_dir <- here(path_raw_data_file, "vireo")
+```
 
-convert_vector <- c("CMO301"= "hLOA_BIHi001-B",
-                    "CMO302"= "hLOA_BIHi005-A",
-                    "CMO303"= "hLOA_BIHi250-A",
-                    "CMO304"= "hLOA_UCSFi001-A")
+```{r prefilter}
+#prefilter
+counts_per_cell_pre_filter <- 50 # QC_setup.R # information will be written to #seurat_obj@misc$filtering_steps$qc_setup
+```
 
-resolution_clustering_1 <- 0.8
-resolution_clustering_2 <- 0.2
-dim_number_pca_and_neighbors <- 15
-
-clustering_rough_RNA <- paste("RNA", "clusters", leiden_or_louvain, "res." , resolution_clustering_2, sep = "_")
-clustering_fine_RNA <- paste("RNA", "clusters", leiden_or_louvain, "res." , resolution_clustering_2, sep = "_")
-
+```{r QC setup}
 source(here("scripts", "QC_setup.R" ))
 
+#returns
 
 
-write_rds(seurat_obj, here("intermediate_data",paste0("QC_dataset_setup_", dataset_name  ,".rds")))
+
+seurat_obj |>  write_rds(make_path_seurat_object(step_no)) #path specified in initial variables chunck
+
+#knee plots
+knee_plot_rna |> ggsave(filename = here(path_output_plots_root, c(paste0(dataset_name,"_read_count_knee.png"))), width = 22) #RNA
+knee_plot_cmo |> ggsave(filename = here(path_output_plots_root, c(paste0(dataset_name,"_hashtag_count_knee.png"))), width = 22) #CMO
+
 
 ```
-
 
 ## plot generation
+
 ```{r plots 1}
-# TODO make output file paths variables to be called from outside
-
-seurat_obj <- read_rds(here("intermediate_data",paste0("QC_dataset_setup_", dataset_name  ,".rds")))
-
-source(here("scripts", "prefiltering_plots.R"))
-
-dir.create(here("output", "hub_10","no_filter" ))
-
-path_grob_filtered_once <- here("output", "hub_10","no_filter" ,  "plot_list_grob.rds")
-path_ggextra_filtered_once <- here("output", "hub_10","no_filter" ,"plotified_plot_list_grob.rds")
+# TODO make output file paths variables to be called from outside --> kinda done: path_output_plots_root, step_no
+seurat_obj <-  read_rds(make_path_seurat_object(step_no)) #path specified in initial variables chunck
 
 
-plot_list_grob |> write_rds(path_grob_filtered_once)
-plotified_ggextra_plot_list_cellbender_cells |>  write_rds(path_ggextra_filtered_once)
+
+generate_plot_grobs <- function(step, dataset = dataset_name) {
+  
+  path_seurat_obj <- make_path_seurat_object(step)
+
+  seurat_obj <- read_rds(path_seurat_obj)
+
+  source(here("scripts", "prefiltering_plots.R"))
+
+  path_grob_filtered <- here(
+    path_output_plots_root,
+    paste(step_no, "plot_list_grob", dataset, "rds", sep = ".")
+  )
+
+  path_ggextra_filtered <- here(
+    path_output_plots_root,
+    paste(step_no, "plotified_plot_list_grob", dataset, "rds", sep = ".")
+  )
+
+  plot_list_grob |> write_rds(path_grob_filtered)
+  plotified_ggextra_plot_list_cellbender_cells |> write_rds(path_ggextra_filtered)
+}
+
+
+generate_plot_grobs(step = step_no)
+
 
 ```
 
-
 ### pre-dashboard creation
-```{r dashboard 1}
-dir.create(here("output", dataset_name, "dashboards"))
 
-quarto_render_move(here("delete_candidates","vireo.qmd"),
-              execute_params=list(
-                param_plot_list_grob = path_grob_filtered_once,
-                param_ggextra_plot_list_grob= path_ggextra_filtered_once),
-              output_file=paste0(dataset_name, "_no_filter_", ".html"),
-              output_dir= here("output", dataset_name, "dashboards")
-              )
+```{r dashboard 1}
+# TODO change ivre.qmd to real dashboard
+make_dashboard_from_grobs <- function(step = step_no, dataset = dataset_name) {
+  path_grob_filtered <- here(
+    path_output_plots_root,
+    paste(step, "plot_list_grob", dataset, "rds", sep = ".")
+  )
+
+  path_ggextra_filtered <- here(
+    path_output_plots_root,
+    paste(step, "plotified_plot_list_grob", dataset, "rds", sep = ".")
+  )
+  
+  quarto_title <- paste0(" \"title=\" ", paste(dataset_name, step_no),"  \" ")
+  quarto_title <- paste0("title=", paste0(dataset_name,": ",  step_no))
+
+  quarto_render_move(here("delete_candidates", "vireo.qmd"),
+    execute_params = list(
+      param_plot_list_grob = path_grob_filtered ,
+      param_ggextra_plot_list_grob = path_ggextra_filtered
+    ),
+    output_file = paste(dataset_name, step_no, "html", sep = "."),
+    output_dir = path_output_dashboards,
+    quarto_args = c("--metadata", quarto_title),
+    metadata= list(title=quarto_title)
+  )
+}
+
+step_no
+make_dashboard_from_grobs()
 ```
 
 # Filter 1
-```{r filter 1}
-seurat_obj <- read_rds(here("intermediate_data",paste0("QC_dataset_setup_", dataset_name  ,".rds")))
 
+```{r filter 1}
+step_no <- "0_setup" # previous step
+#seurat_obj <- read_rds(make_path_seurat_object(step_no))
+
+step_no <- "1_filtered_1"
 seurat_obj <- seurat_obj |> filter(vireo_snp_demux !="no vireo data")
+
+#filter
+seurat_obj@misc$filtering_steps$filter_1 <- c("vireo_snp_demux !=no vireo data")
+
 ```
 
 ## basic processing
+
 ```{r basic processing 2}
 
 resolution_clustering_1 <- 0.8
@@ -110,8 +208,6 @@ resolution_clustering_2 <- 0.2
 dim_number_pca_and_neighbors <- 15
 
 
-resolution_clustering_1 <- resolution_clustering_1
-resolution_clustering_2 <- resolution_clustering_2
 dim_number_pca_and_neighbors <- dim_number_pca_and_neighbors
 
 convert_vector <- c("CMO301"= "hLOA_BIHi001-B",
@@ -119,60 +215,45 @@ convert_vector <- c("CMO301"= "hLOA_BIHi001-B",
                     "CMO303"= "hLOA_BIHi250-A",
                     "CMO304"= "hLOA_UCSFi001-A")
 
-
 source(here("scripts", "basic_seurat_processing_for_each_assay.R"))
-
-seurat_obj |> write_rds(here("intermediate_data",paste0("filtered_1_", dataset_name  , ".rds")))
+seurat_obj |> write_rds(make_path_seurat_object(step_no))
 ```
 
 ## plot generation
+
 ```{r plots 2}
-seurat_obj <- read_rds(here("intermediate_data",paste0("filtered_1_", dataset_name  , ".rds")))
-
-# TODO make output file paths variables to be called from outside
-
-
-
-source(here("scripts", "prefiltering_plots.R"))
-
-dir.create(here("output", "hub_10","filtered_once"))
-
-
-path_grob_filtered_once <- here("output", "hub_10","filtered_once" ,  "plot_list_grob.rds")
-path_ggextra_filtered_once <- here("output", "hub_10","filtered_once" ,"plotified_plot_list_grob.rds")
-
-
-plot_list_grob |> write_rds(path_grob_filtered_once)
-plotified_ggextra_plot_list_cellbender_cells |>  write_rds(path_ggextra_filtered_once)
+generate_plot_grobs(step = step_no)
 
 ```
-
 
 ## pre-dashboard creation
+
 ```{r dashboard 2}
 
-#dir.create(here("output", dataset_name, "dashboards"))
+# dir.create(here("output", dataset_name, "dashboards"))
 
-quarto_render_move(here("delete_candidates","vireo.qmd"),
-              execute_params=list(
-                param_plot_list_grob = path_grob_filtered_once,
-                param_ggextra_plot_list_grob= path_ggextra_filtered_once),
-              output_file=paste0(dataset_name, "_filtered_once_", ".html"),
-              output_dir= here("output", dataset_name, "dashboards")
-              )
+
+make_dashboard_from_grobs()
+
 ```
+
 # Filter 2
 
-```{r filter 1}
-seurat_obj <- read_rds(here("intermediate_data",paste0("QC_dataset_setup_", dataset_name  ,".rds")))
+```{r filter 2}
+
+step_no <- "2_filtered_2"
+seurat_obj <- read_rds(make_path_seurat_object(step_no))
 
 seurat_obj <- seurat_obj |> filter(str_detect(vireo_snp_demux, "donor"))
+ 
+
+#filter
+seurat_obj@misc$filtering_steps$filter_2 <- "vireo_snp_demux !=no vireo data"
+
 ```
 
-
-
-
 ## basic processing
+
 ```{r basic processing 2}
 
 resolution_clustering_1 <- 0.8
@@ -192,87 +273,72 @@ convert_vector <- c("CMO301"= "hLOA_BIHi001-B",
 
 source(here("scripts", "basic_seurat_processing_for_each_assay.R"))
 
-seurat_obj |> write_rds(here("intermediate_data",paste0("filtered_2_", dataset_name  , ".rds")))
+seurat_obj |> write_rds(make_path_seurat_object(step_no))
 ```
 
 ## plot generation
+
 ```{r plots 2}
-seurat_obj <- read_rds(here("intermediate_data",paste0("filtered_2_", dataset_name  , ".rds")))
 
-# TODO make output file paths variables to be called from outside
+generate_plot_grobs(step = step_no)
 
-
-
-source(here("scripts", "prefiltering_plots.R"))
-
-dir.create(here("output", "hub_10","filtered_twice"))
-
-
-path_grob <- here("output", "hub_10","filtered_twice",  "plot_list_grob.rds")
-path_ggextra<- here("output", "hub_10","filtered_twice" ,"plotified_plot_list_grob.rds")
-
-
-plot_list_grob |> write_rds(path_grob)
-plotified_ggextra_plot_list_cellbender_cells |>  write_rds(path_ggextra)
 
 ```
-
 
 ## pre-dashboard creation
+
 ```{r dashboard 2}
-
-#dir.create(here("output", dataset_name, "dashboards"))
-
-quarto_render_move(here("delete_candidates","vireo.qmd"),
-              execute_params=list(
-                param_plot_list_grob = path_grob,
-                param_ggextra_plot_list_grob= path_ggextra),
-              output_file=paste0(dataset_name, "_filtered_twice_", ".html"),
-              output_dir= here("output", dataset_name, "dashboards")
-              )
+make_dashboard_from_grobs()
 ```
 
-# -------------------------------
+# ----------------------------------------------------
+
+# ----------------------------------------------------
 
 # Main dashboard
 
 ## plot generation
+
 ```{r}
-seurat_obj <- read_rds(here("intermediate_data",paste0("filtered_2_", dataset_name  , ".rds")))
-
-# source(here("scripts", "QC_dashboard_hub_10_processing_post_vireo_prefiltering.R"))
-
-# source(here("scripts",paste0("QC_dashboard_",dataset_name,"_processing", ".R")))
-
-
-new_dir <- here("output", "hub_10", "filter_2" )
-
-dir.create(new_dir)
+step_no <- "2_filtered_2"
+seurat_obj <- read_rds(make_path_seurat_object(step_no))
 
 
 source(here("scripts", "plot_specs_QC_dashboard.R"))
 
-seurat_obj[["percent_mito"]] <- PercentageFeatureSet(object = seurat_obj, pattern = "^MT-")
+upper_mito_thresh <- 20
+lower_nCount_RNA_thresh <- 0
+upper_nCount_RNA_thresh <- 100001
+
+
+# new metadata based on filtering thresholds
 seurat_obj$"mito_group" <- ifelse(pull(seurat_obj, percent_mito) > upper_mito_thresh,"over perc. mito. thresh.","under perc. mito thresh.")
+
 log_n_count_rna_plot_limits <- c(0.001,log(1.05*(max(seurat_obj$nCount_RNA))))
 n_count_rna_plot_limits <- c(1,1.05*(max(seurat_obj$nCount_RNA)))
 
+#arrange meta data alphabetically
+seurat_obj@meta.data <- seurat_obj@meta.data[,order(colnames(seurat_obj@meta.data))] 
+
 source(here("scripts", "qc_dashboard_plots.R"))
 
-
+#####################3
+###########33
 path_grob <- here(new_dir, "qc_dashboard_plot_plot_list_grob_filter_2.rds")
-#path_ggplot_filtered_once <- here(new_dir, "plot_list_ggplot_filter_2.rds")
+
+path_grob<- here(
+    path_output_plots_root,
+    paste(step_no, "main_dashboard_plot_list_grob", dataset_name, "rds", sep = ".")
+  )
+
 
 dim_plot_grob_list |> write_rds(path_grob)
 #plots_list |> write_rds(path_ggplot_filtered_once)
 
-
-
-
-
 ```
 
 ## dashboard
+
 ```{r dashboard XX}
 
 #dir.create(here("output", dataset_name, "dashboards"))
@@ -284,11 +350,12 @@ quarto_render_move(here("delete_candidates","QC_dash_page_1_delete_later.qmd"),
                     content= "Alveolar Lung Organoids"
                     ),
               output_file=paste0(dataset_name, "_QC_dash_page_1", ".html"),
-              output_dir= here("output", dataset_name, "dashboards")
+              output_dir= here("output",dataset_name, "qc_process", "dashboards")
               )
 ```
 
 # Filter 3
+
 ```{r}
 seurat_obj <- read_rds(here("intermediate_data",paste0("filtered_2_", dataset_name  , ".rds")))
 
@@ -301,16 +368,27 @@ filtered_seurat_obj <- seurat_obj |>
       singlet_doublet_cellranger == "singlet" & 
       cellbender_prob_to_be_cell> 0.99) 
 
+#filter
+ # QC_setup.R
+seurat_obj@misc$filtering_steps$filter_3 <- c(paste("nCount_RNA <", upper_nCount_RNA_thresh),
+                                              paste("nCount_RNA >", lower_nCount_RNA_thresh),
+                                              paste("percent mito > ", upper_mito_thresh),
+                                              "singlets cellranger",
+                                              "cellbender_prob_to_be_cell > 0.99"
+                                     
+                                     )
+
+
+
 write_rds(filtered_seurat_obj,
           here("intermediate_data",paste0("filtered_3_", dataset_name  , ".rds")) )
 
+
+seurat_obj |> ggplot(aes(nCount_RNA, nFeature_RNA)) + geom_point()
 ```
 
-
-
-
-
 ### plot generation
+
 ```{r}
 seurat_obj <- read_rds(here("intermediate_data",paste0("filtered_3_", dataset_name  , ".rds")))
 
@@ -346,10 +424,6 @@ dim_plot_grob_list |> write_rds(path_grob)
 
 ```
 
-
-
-
-
 ```{r dashboard XX}
 
 #dir.create(here("output", dataset_name, "dashboards"))
@@ -365,14 +439,8 @@ quarto_render_move(here("delete_candidates","QC_dash_page_1_delete_later.qmd"),
               )
 ```
 
-
-
-
-
-
-
-
 ## basic processing
+
 ```{r basic processing 2}
 
 seurat_obj <- read_rds(here("intermediate_data",paste0("filtered_3_", dataset_name  , ".rds")))
@@ -398,11 +466,8 @@ source(here("scripts", "basic_seurat_processing_for_each_assay.R"))
 seurat_obj |> write_rds(here("intermediate_data",paste0("filtered_3_", dataset_name ,"_processed" , ".rds")))
 ```
 
-
-
-
-
 ### plot generation
+
 ```{r}
 seurat_obj |> write_rds(here("intermediate_data",paste0("filtered_3_", dataset_name ,"_processed" , ".rds")))
 
@@ -438,10 +503,6 @@ dim_plot_grob_list |> write_rds(path_grob)
 
 ```
 
-
-
-
-
 ```{r dashboard XX}
 
 #dir.create(here("output", dataset_name, "dashboards"))
@@ -457,46 +518,155 @@ quarto_render_move(here("delete_candidates","QC_dash_page_1_delete_later.qmd"),
               )
 ```
 
-
-
-
 ```{r}
 
 ```
 
+```{r test}
+
+test_make_dashboard_from_grobs <- function(step = step_no, dataset = dataset_name) {
+  path_grob_filtered <- here(
+    path_output_plots_root,
+    paste(step, "plot_list_grob", dataset, "rds", sep = ".")
+  )
+
+  path_ggextra_filtered <- here(
+    path_output_plots_root,
+    paste(step, "plotified_plot_list_grob", dataset, "rds", sep = ".")
+  )
+  quarto_title=paste(dataset_name, step_no)
+
+
+  quarto_render_move(
+    here("delete_candidates", "prefiltering_dashboard_page.qmd"),
+    execute_params = list(
+      param_plot_list_grob = path_grob_filtered,
+      param_ggextra_plot_list_grob = path_ggextra_filtered
+    ),
+    output_file = paste("test",dataset_name, step_no, "html", sep = "."),
+    output_dir = path_output_dashboards,
+    metadata_file= here("scripts", "alt_test.yml"),
+    quarto_args = c("--metadata", quarto_title)
+  )
+}
+
+step_no="1_filtered_1"
+
+test_make_dashboard_from_grobs()
+
+file.exists(here("scripts", "alt_test.yml"))
+
+```
+
+```{r}
+
+
+make_text_plot <- function(text_vec, title, text_size = 5, title_size = 10) {
+  y_vals <- length(text_vec):1
+  ggplot() +
+    annotate("text", x = 1, y = y_vals, label = text_vec, hjust = 0, size = text_size) +
+    ggtitle(title) +
+    theme_void() +
+    theme(
+      plot.title = element_text(size = title_size, face = "bold", hjust = 0.5)
+    ) +
+    xlim(0.9, 2) +
+    ylim(0.5, length(text_vec) + 1)
+}
+
+# Create list of plots
+plot_list <- lapply(seurat_obj@misc$filtering_steps, make_text_plot)
+plot_list <- mapply(make_text_plot, seurat_obj@misc$filtering_steps, names(seurat_obj@misc$filtering_steps), SIMPLIFY = FALSE)
+
+# Optionally, display them together
+grid.arrange(grobs = plot_list,ncol=1 )
+plot_grob <- arrangeGrob(grobs = plot_list, ncol = 1)
+```
+
+```{r dashboard 1}
+#TODO change ivre.qmd to real dashboard
+make_dashboard_from_grobs <- function(step = step_no, dataset = dataset_name) {
+  path_grob_filtered <- here(
+    path_output_plots_root,
+    paste(step, "plot_list_grob", dataset, "rds", sep = ".")
+  )
+
+  path_ggextra_filtered <- here(
+    path_output_plots_root,
+    paste(step, "plotified_plot_list_grob", dataset, "rds", sep = ".")
+  )
+
+
+  quarto_render_move(here("delete_candidates", "vireo.qmd"),
+    execute_params = list(
+      param_plot_list_grob = path_grob_filtered,
+      param_ggextra_plot_list_grob = path_ggextra_filtered
+    ),
+    output_file = paste(dataset_name, step_no, "html", sep = "."),
+    output_dir = path_output_dashboards
+  )
+}
+
+
+make_dashboard_from_grobs()
+```
+
+```{r}
+library(tibble)
+library(purrr)
+library(gt)
+
+# Named list of character vectors
+text_list <- list(
+  First = c("Hello", "world!"),
+  Second = c("Another", "plot", "here"),
+  Third = c("R is", "great for", "data viz")
+)
+
+# Create equal-length tibble
+max_len <- max(lengths(text_list))
+table_df <- map_dfc(text_list, ~{
+  vec <- .x
+  length(vec) <- max_len  # pad with NA
+  tibble(value = vec)
+})
+names(table_df) <- names(text_list)
+
+# Create a gt table
+gt_table <- table_df %>%
+  gt() %>%
+  tab_header(
+    title = "List Elements as Table"
+  )
+
+# Print the table
+gt_table
+
+
+# Named list of character vectors
+text_list <- list(
+  First = c("Hello", "world!"),
+  Second = c("Another", "plot", "here"),
+  Third = c("R is", "great for", "data viz")
+)
 
 
 
 
+# Combine into one long-format table
+combined_table <- imap_dfr(text_list, function(vec, name) {
+  tibble(value = vec, group = name)
+}, .id = "row_id") %>%
+  select(-row_id)
 
+# Create a gt table with row groups
+gt_combined <- combined_table %>%
+  gt(groupname_col = "group") %>%
+  cols_label(value = "") %>%
+  tab_options(
+    row_group.font.weight = "bold",
+    table.font.size = px(14)
+  )
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+gt_combined
+```

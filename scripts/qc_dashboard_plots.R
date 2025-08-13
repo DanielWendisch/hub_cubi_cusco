@@ -92,7 +92,7 @@ DefaultAssay(seurat_obj) <- "RNA"
 
 
 
-plots_list$RNA[["RNA_clusters_louvain_res0.8"]] <- seurat_obj |> DimPlot(group.by = "RNA_clusters_louvain_res0.8")
+plots_list$RNA[[clustering_rough_RNA]] <- seurat_obj |> DimPlot(group.by = clustering_rough_RNA)
 
 
 plots_list$RNA[["bar_cell_line_doublet_cellranger"]] <- seurat_obj |> ggplot(aes(.data[[basic_cluster_name]],fill=cell_line_doublet_cellranger))+
@@ -102,10 +102,10 @@ theme_minimal()
 
 DefaultAssay(seurat_obj) <- "cellbender_RNA"
 
-plots_list$cellbender_RNA[["cellbender_RNA_clusters_louvain_res0.8"]] <- seurat_obj |> DimPlot(group.by = "RNA_clusters_louvain_res0.8")
+plots_list$cellbender_RNA[[clustering_rough_cellbender]] <- seurat_obj |> DimPlot(group.by = clustering_rough_cellbender)
 
 
-plots_list$cellbender[["bar_cell_line_doublet_cellranger"]] <- seurat_obj |> ggplot(aes(.data[[basic_cluster_name]],fill=cell_line_doublet_cellranger))+
+plots_list$cellbender[["bar_cell_line_doublet_cellranger"]] <- seurat_obj |> ggplot(aes(.data[[clustering_rough_RNA]],fill=cell_line_doublet_cellranger))+
   geom_bar()+
   theme_minimal()
 
@@ -134,7 +134,8 @@ plots_list$cellbender_RNA[["perc_mito_RNA_embedding"]] <- seurat_obj |> FeatureP
 
 
 
-plots_list$RNA[["binned_nCount_RNA_singlet_doublet_cellranger"]] <- seurat_obj |> mutate(quantile_nCount_RNA = ntile(nCount_RNA,100)) |>  # Create groups in steps of 1000
+plots_list$RNA[["binned_nCount_RNA_singlet_doublet_cellranger"]] <- seurat_obj |> 
+  mutate(quantile_nCount_RNA = ntile(nCount_RNA,100)) |>  # Create groups in steps of 1000
   group_by(quantile_nCount_RNA,singlet_doublet_cellranger) |> 
   summarise(n = n(), .groups = 'drop', min_of_bin_nCount_RNA=min(nCount_RNA)) |> 
   group_by(quantile_nCount_RNA) |> 
