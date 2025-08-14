@@ -1,0 +1,710 @@
+---
+title: "lung and intestinal organoid integration"
+format: html
+editor: visual
+---
+
+# setup
+
+```{r}
+#| message: false
+#| warning: false
+library(tidyverse)
+library(Seurat)
+library(tidyseurat)
+library(here)
+library(SeuratWrappers)
+library(patchwork)
+library(edgeR)
+library(janitor)
+library(ggpubr)
+```
+
+
+```{r}
+intermediate_data_path <- here("intermediate_data", "lung_and_intestinal_organoid_integration")
+output_path <- here("output", "lung_and_intestinal_organoid_integration")
+
+dir.create(intermediate_data_path)
+dir.create(output_path)
+plot_list <- list()
+recalculate_integration <- FALSE
+```
+
+
+```{r}
+hub_01 <- readRDS("C:/Users/Danne/R_projects/hub_cubi_cusco/intermediate_data/hub_01/qc_process/seurat_obj.1_filtered_1.hub_01.rds")
+
+hub_01$orig.ident <- "hub_01"
+
+plot_list$hub_01$Dimplot_RNA_clusters_louvain_res._0.8 <-  hub_01 |> DimPlot(group.by = "RNA_clusters_louvain_res._0.8")
+plot_list$hub_01$Dimplot_RNA_clusters_louvain_res._0.8
+```
+
+
+```{r}
+if (recalculate_integration) {
+  
+
+
+hub_10_11 <-  read_rds(here("intermediate_data", "integrate_punk", "seurat_obj_hub_10_11_perintegration.rds"))
+
+
+hub_01_10_11 <- merge(hub_01, y = hub_10_11, project = "hub")
+#hub_01_10_11 <- SplitObject(hub_01_10_11, split.by = "orig.ident")
+hub_01_10_11 <- JoinLayers(hub_01_10_11)
+
+hub_01_10_11 <- NormalizeData(hub_01_10_11)
+hub_01_10_11 <- FindVariableFeatures(hub_01_10_11)
+hub_01_10_11 <- ScaleData(hub_01_10_11)
+hub_01_10_11[["RNA"]]$scale.data  <- hub_01_10_11[["RNA"]]$scale.data%>% write_matrix_memory(compress=FALSE)
+
+hub_01_10_11 <- RunPCA(hub_01_10_11)
+
+hub_01_10_11 <- FindNeighbors(hub_01_10_11, dims = 1:30, reduction = "pca")
+hub_01_10_11 <- FindClusters(hub_01_10_11, resolution = 2, cluster.name = "unintegrated_clusters")
+
+hub_01_10_11 <- RunUMAP(hub_01_10_11, dims = 1:30, reduction = "pca", reduction.name = "umap.unintegrated")
+
+hub_01_10_11 <- JoinLayers(hub_01_10_11)
+
+
+hub_01_10_11[["RNA"]] <- split(hub_01_10_11[["RNA"]], f = hub_01_10_11$orig.ident)
+
+hub_01_10_11 <- NormalizeData(hub_01_10_11)
+hub_01_10_11 <- FindVariableFeatures(hub_01_10_11)
+hub_01_10_11 <- ScaleData(hub_01_10_11)
+hub_01_10_11[["RNA"]]$scale.data  <- hub_01_10_11[["RNA"]]$scale.data%>% write_matrix_memory(compress=FALSE)
+hub_01_10_11 <- RunPCA(hub_01_10_11)
+
+hub_01_10_11 <- IntegrateLayers( object = hub_01_10_11, method = HarmonyIntegration,
+  orig.reduction = "pca", new.reduction = "harmony",
+  verbose = FALSE)
+
+hub_01_10_11 <- FindNeighbors(hub_01_10_11, dims = 1:20, reduction = "harmony")
+hub_01_10_11 <- FindClusters(hub_01_10_11, resolution = 0.2, cluster.name = "harmony_clusters_res0.2_20dims")
+hub_01_10_11 <- RunUMAP(hub_01_10_11, reduction = "harmony", dims = 1:30, reduction.name = "umap.harmony")
+
+hub_01_10_11 <- IntegrateLayers(
+  object = hub_01_10_11, method = FastMNNIntegration,
+  new.reduction = "integrated.mnn",
+  verbose = FALSE
+)
+
+hub_01_10_11 <- RunUMAP(hub_01_10_11, reduction = "integrated.mnn", dims = 1:30, reduction.name = "umap.mnn")
+hub_01_10_11 <- FindNeighbors(hub_01_10_11, dims = 1:20, reduction = "integrated.mnn")
+hub_01_10_11 <- FindClusters(hub_01_10_11, resolution = 0.2, cluster.name = "mnn_clusters_res0.2_20dims")
+
+
+```
+
+the following analysis refers to celltype grouping by cellranger, which however is not dramtically different from vireo calls. This a prelimnary step to ensure adaquate comparinson between experiments and seqeunign batches
+```{r}
+
+# TODO metadata renaming should later be erased whe all is computed in QC_setup.R
+
+hub_01_10_11$organoid <-  hub_01_10_11 |> separate(cell_line_cellranger, sep = "_", into = "organoid") |> pull(organoid)
+
+hub_01_10_11$cell_line <-  hub_01_10_11 |> separate(cell_line_cellranger, sep = "_", into = c("organoid", "cell_line")) |> pull(cell_line)
+
+hub_01_10_11 |> write_rds(here(output_path, "seurat_obj_hub_01_10_11_harmony_mnn.rds"))
+
+
+hub_01_10_11 |>
+  select(cell_line_cellranger, vireo_snp_demux, orig.ident) |>
+  group_by(cell_line_cellranger,orig.ident) |> 
+  count(vireo_snp_demux) |> arrange(vireo_snp_demux) |>
+  filter(orig.ident=="hub_10")
+```
+
+
+# PLOTS
+```{r}
+hub_01_10_11 <-  read_rds(here(output_path, "seurat_obj_hub_01_10_11_harmony_mnn.rds"))
+
+# TODO move to other script 
+hub_01_10_11$organoid.seq_run <-  hub_01_10_11 |> mutate(organoid.seq_run=paste(organoid, orig.ident, sep = "_")) |> pull(organoid.seq_run)
+```
+
+
+```{r}
+plot_list$hub_01_10_11$n_cell_line_organoid <- hub_01_10_11@meta.data |> as_tibble()  |> 
+  ggplot(aes(cell_line_cellranger, fill = cell_line_cellranger))+
+  geom_bar()+ facet_grid(organoid ~ orig.ident)+
+  theme_bw()+theme(axis.text.x = element_text(angle = 45, hjust = 1))+ggtitle("cell number in samples")
+
+plot_list$hub_01_10_11$n_cell_line_organoid 
+```
+
+
+```{r}
+# Function to generate DimPlots
+generate_dimplots <- function(seurat_obj, plot_list, group_vars, reduction, slot_name) {
+  for (group in group_vars) {
+    plot_name <- paste0(reduction, "_", group)
+    plot_list[[slot_name]][[plot_name]] <- DimPlot(seurat_obj, reduction = reduction, group.by = group)
+  }
+  return(plot_list)
+}
+
+# Function to generate FeaturePlots (default cutoff)
+generate_featureplots_default <- function(seurat_obj, plot_list, features, reduction, slot_name) {
+  for (gene in features) {
+    plot_name <- paste0(reduction, "_", gene)
+    plot_list[[slot_name]][[plot_name]] <- FeaturePlot(seurat_obj, reduction = reduction, features = gene)
+  }
+  return(plot_list)
+}
+
+# Function to generate FeaturePlots with q90 cutoff
+generate_featureplots_q90 <- function(seurat_obj, plot_list, features, reduction, slot_name) {
+  for (gene in features) {
+    plot_name <- paste0(reduction, "_", gene)
+    plot_list[[slot_name]][[plot_name]] <- FeaturePlot(seurat_obj, reduction = reduction, features = gene, max.cutoff = "q90")
+  }
+  return(plot_list)
+}
+
+# Function to save selected plots
+save_plots <- function(plot_list, slot_name, plot_names, reduction, output_path) {
+  for (name in plot_names) {
+    full_plot_name <- paste0(reduction, "_", name)
+    plot_obj <- plot_list[[slot_name]][[full_plot_name]]
+    ggsave(filename = here(output_path, paste0(full_plot_name, ".png")), plot = plot_obj, dpi = 600)
+  }
+}
+
+```
+
+
+
+### Unintegrated batches
+
+
+
+```{r}
+# Define parameters
+unintegrated_group_vars <- c("orig.ident", "cell_line_cellranger", "organoid")
+reduction_unintegrated <- "umap.unintegrated"
+seurat_obj_name <- "hub_01_10_11"
+
+# Generate and save plots
+plot_list <- generate_dimplots(hub_01_10_11, plot_list, unintegrated_group_vars, reduction_unintegrated, seurat_obj_name)
+save_plots(plot_list, seurat_obj_name, unintegrated_group_vars, reduction_unintegrated, output_path)
+
+for (group in unintegrated_group_vars) {
+  print(plot_list[[seurat_obj_name]][[paste0(reduction_unintegrated, "_", group)]])
+}
+```
+```{r}
+names(plot_list$hub_01_10_11)
+```
+
+
+
+
+### MNN
+
+
+
+
+```{r}
+# Parameters
+reduction_method <- "umap.mnn"
+slot <- "hub_01_10_11"
+group_vars <- c("orig.ident", "cell_line_cellranger", "organoid", "mnn_clusters_res0.2_20dims")
+feature_genes_default <- c("EPCAM", "CPM")
+feature_genes_q90 <- c("SOX1", "VIM", "RFX4", "CDH2")
+
+# Run functions
+plot_list <- generate_dimplots(hub_01_10_11, plot_list, group_vars, reduction_method, slot)
+plot_list <- generate_featureplots_default(hub_01_10_11, plot_list, feature_genes_default, reduction_method, slot)
+plot_list <- generate_featureplots_q90(hub_01_10_11, plot_list, feature_genes_q90, reduction_method, slot)
+
+# Save selected plots
+plots_to_save <- c(group_vars, feature_genes_default, feature_genes_q90)
+save_plots(plot_list, slot, plots_to_save, reduction_method, output_path)
+
+# Print all the plots
+for (name in plots_to_save) {
+  plot_obj <- plot_list[[slot]][[paste0(reduction_method, "_", name)]]
+  print(plot_obj)
+}
+```
+
+
+
+### density plots
+
+```{r}
+generate_density_plots <- function(seurat_obj,
+                                   plot_list,
+                                   slot_name,
+                                   reduction_pairs = c("umapmnn", "umapharmony"),
+                                   grouping_vars = c("orig.ident"),
+                                   output_path = NULL,
+                                   save = TRUE) {
+  for (group_var in grouping_vars) {
+    for (reduction in reduction_pairs) {
+      dims <- paste0(reduction, c("_1", "_2"))
+
+      p <- seurat_obj |>
+        ggplot(aes_string(x = dims[1], y = dims[2], colour = group_var)) +
+        geom_point(alpha = 0.1, color = "grey") +
+        stat_density_2d(linewidth = 1, bins = 20) +
+        theme_bw() +
+        NoLegend()
+
+      name <- paste0("dens_2d_", reduction, "_", group_var)
+      plot_list[[slot_name]][[name]] <- p
+
+      # Save if required
+      if (!is.null(output_path) && save) {
+        ggsave(filename = here::here(output_path, paste0(name, ".png")),
+               plot = p, width = 15, height = 12, dpi = 600)
+      }
+
+      # Print plot
+      print(p)
+    }
+  }
+
+  return(plot_list)
+}
+
+```
+
+
+```{r}
+# Parameters
+reduction_pairs <- c("umapharmony", "umapmnn")  # match your data frame columns like umapharmony_1
+group_vars_density <- c("orig.ident", "cell_line_cellranger", "organoid.seq_run")
+slot <- "hub_01_10_11"
+
+# Generate, print, and optionally save plots
+plot_list <- generate_density_plots(
+  seurat_obj = hub_01_10_11,
+  plot_list = plot_list,
+  slot_name = slot,
+  reduction_pairs = reduction_pairs,
+  grouping_vars = group_vars_density,
+  output_path = output_path,
+  save = TRUE
+)
+
+```
+### harmony plots
+
+```{r}
+# Parameters
+reduction_method <- "umap.harmony"
+slot <- "hub_01_10_11"
+group_vars <- c("harmony_clusters_res0.2_20dims","orig.ident", "cell_line_cellranger", "organoid")
+feature_genes <- c("EPCAM", "MAP1B", "NEUROG2", "TNFAIP6", "COL1A1")
+
+# Generate plots
+plot_list <- generate_dimplots(hub_01_10_11, plot_list, group_vars, reduction_method, slot)
+plot_list <- generate_featureplots_default(hub_01_10_11, plot_list, feature_genes, reduction_method, slot)
+
+# Save plots
+plots_to_save <- c(group_vars, feature_genes)
+save_plots(plot_list, slot, plots_to_save, reduction_method, output_path)
+
+# Print plots
+for (name in plots_to_save) {
+  print(plot_list[[slot]][[paste0(reduction_method, "_", name)]])
+}
+
+
+```
+
+
+
+
+#barplots harmony
+
+```{r}
+plot_list$hub_01_10_11$n_dataset_harmony_clusters_res0.2_20dims<- hub_01_10_11@meta.data |> as_tibble()  |> 
+  ggplot(aes(harmony_clusters_res0.2_20dims, fill = harmony_clusters_res0.2_20dims))+
+  geom_bar()+ facet_wrap(~ orig.ident)+
+  theme_bw()+theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+plot_list$hub_01_10_11$n_dataset_harmony_clusters_res0.2_20dims
+```
+
+```{r}
+plot_list$hub_01_10_11$freq_dataset_harmony_clusters_res0.2_20dims <- hub_01_10_11@meta.data |>
+  as_tibble()  |> 
+  count(orig.ident,
+        harmony_clusters_res0.2_20dims) |> 
+  group_by(orig.ident) |> 
+  mutate(freq=n/sum(n)) |> 
+  ggplot(aes(harmony_clusters_res0.2_20dims,y=freq, fill = harmony_clusters_res0.2_20dims))+
+  geom_col()+ facet_wrap(vars(orig.ident))+
+  theme_bw()+theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+plot_list$hub_01_10_11$freq_dataset_harmony_clusters_res0.2_20dims
+
+plot_list$hub_01_10_11$freq_dataset_harmony_clusters_res0.2_20dims_facet_organoid <- hub_01_10_11@meta.data |>
+  as_tibble()  |> 
+  count(orig.ident,organoid,
+        harmony_clusters_res0.2_20dims) |> 
+  group_by(orig.ident,organoid) |> 
+  mutate(freq=n/sum(n)) |> 
+  ggplot(aes(harmony_clusters_res0.2_20dims,y=freq, fill = harmony_clusters_res0.2_20dims))+
+  geom_col()+ facet_grid(orig.ident~organoid)+
+  theme_bw()+theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+plot_list$hub_01_10_11$freq_dataset_harmony_clusters_res0.2_20dims_facet_organoid_celline <- hub_01_10_11@meta.data |>
+  as_tibble()  |> 
+  count(cell_line,organoid,
+        harmony_clusters_res0.2_20dims) |> 
+  group_by(cell_line,organoid) |> 
+  mutate(freq=n/sum(n)) |> 
+  ggplot(aes(harmony_clusters_res0.2_20dims,y=freq, fill = harmony_clusters_res0.2_20dims))+
+  geom_col()+ facet_grid(cell_line~organoid)+
+  theme_bw()+theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+```{r}
+plots_to_handle_harmony <- c(
+  "n_dataset_harmony_clusters_res0.2_20dims",
+  "freq_dataset_harmony_clusters_res0.2_20dims",
+  "freq_dataset_harmony_clusters_res0.2_20dims_facet_organoid",
+  "freq_dataset_harmony_clusters_res0.2_20dims_facet_organoid_celline"
+)
+
+save_and_print_plots(plot_list, "hub_01_10_11", plots_to_handle_harmony, output_path)
+
+```
+
+
+
+## mnn barplots
+
+```{r}
+
+plot_list$hub_01_10_11$freq_dataset_mnn_clusters_res0.2_20dims <- hub_01_10_11@meta.data |>
+  as_tibble()  |> 
+  count(orig.ident,
+        mnn_clusters_res0.2_20dims) |> 
+  group_by(orig.ident) |> 
+  mutate(freq=n/sum(n)) |> 
+  ggplot(aes(mnn_clusters_res0.2_20dims,y=freq, fill = mnn_clusters_res0.2_20dims))+
+  geom_col()+ facet_wrap(vars(orig.ident))+
+  theme_bw()+theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+plot_list$hub_01_10_11$freq_dataset_mnn_clusters_res0.2_20dims_facet_organoid <- hub_01_10_11@meta.data |>
+  as_tibble()  |> 
+  count(orig.ident,organoid,
+        mnn_clusters_res0.2_20dims) |> 
+  group_by(orig.ident,organoid) |> 
+  mutate(freq=n/sum(n)) |> 
+  ggplot(aes(mnn_clusters_res0.2_20dims,y=freq, fill = mnn_clusters_res0.2_20dims))+
+  geom_col()+ facet_grid(orig.ident~organoid)+
+  theme_bw()+theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+plot_list$hub_01_10_11$freq_dataset_mnn_clusters_res0.2_20dims_facet_organoid_celline <- hub_01_10_11@meta.data |>
+  as_tibble()  |> 
+  count(cell_line,
+        organoid,
+        mnn_clusters_res0.2_20dims) |> 
+  group_by(cell_line,organoid) |> 
+  mutate(freq=n/sum(n)) |> 
+  ggplot(aes(mnn_clusters_res0.2_20dims,
+             y=freq,
+             fill = mnn_clusters_res0.2_20dims))+
+  geom_col()+
+  facet_grid(organoid~cell_line)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+plot_list$hub_01_10_11$freq_dataset_mnn_clusters_res0.2_20dims_facet_experiment_celline <- hub_01_10_11@meta.data |>
+  as_tibble()  |> 
+  filter(organoid=="hIO") |> 
+  count(cell_line,orig.ident,
+        mnn_clusters_res0.2_20dims) |> 
+  group_by(cell_line,orig.ident) |> 
+  mutate(freq=n/sum(n)) |> 
+  ggplot(aes(mnn_clusters_res0.2_20dims,y=freq, fill = mnn_clusters_res0.2_20dims))+
+  geom_col()+ facet_grid(orig.ident~cell_line)+
+  theme_bw()+theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+plots_to_save <- c(
+  "freq_dataset_mnn_clusters_res0.2_20dims_facet_organoid",
+  "freq_dataset_mnn_clusters_res0.2_20dims",
+  "freq_dataset_mnn_clusters_res0.2_20dims_facet_organoid_celline",
+  "freq_dataset_mnn_clusters_res0.2_20dims_facet_experiment_celline"
+)
+
+for (plot_name in plots_to_save) {
+  p <- plot_list$hub_01_10_11[[plot_name]]
+  print(p)
+  ggsave(filename = here(output_path, paste0(plot_name, ".png")), plot = p, dpi = 600)
+}
+
+```
+
+
+# Markers
+
+
+### Mesenchyme and Epithel
+
+```{r}
+markers_left<- hub_01_10_11 |> JoinLayers()|> FindMarkers(group.by = "mnn_clusters_res0.2_20dims", ident.1 = c(8,4,3,5), ident.2 =c(0,1,2,6),min.pct = 0.1,max.cells.per.ident = 500) |> as_tibble(rownames = "gene")
+
+
+markers_left |> arrange(desc(avg_log2FC))
+
+markers_left |> filter(avg_log2FC>0) |> arrange(p_val_adj)
+
+markers_left |> filter(avg_log2FC>0) |> slice_min(p_val_adj, n=20) |> pull(gene) |> writeClipboard()
+
+```
+
+
+```{r}
+markers_left |> filter(avg_log2FC<0) |> arrange(p_val_adj)
+```
+
+
+
+
+```{r}
+hub_01_10_11$mesenchymal_epithelial <- hub_01_10_11 |> mutate(
+  mesenchymal_epithelial=if_else(mnn_clusters_res0.2_20dims %in% c(8,4,3,5), "mesenchymal",
+                                 if_else(mnn_clusters_res0.2_20dims %in% c(0,1,2,6), "epithelial",
+                                 mnn_clusters_res0.2_20dims))) |> pull(mesenchymal_epithelial)
+
+plot_list$hub_01_10_11$umap.mnn_mesenchymal_epithelial <- DimPlot(hub_01_10_11, reduction = "umap.mnn", group.by="mesenchymal_epithelial")
+
+plot_list$hub_01_10_11$umap.mnn_mesenchymal_epithelial 
+
+plot_list$hub_01_10_11$umap.mnn_mesenchymal_epithelial |>
+  ggsave(filename =here(output_path,"umap.mnn_mesenchymal_epithelial.png"))
+
+```
+
+```{r}
+plot_list$hub_01_10_11$n_dataset_mesenchymal_epithelial<- hub_01_10_11@meta.data |> as_tibble()  |> 
+  ggplot(aes(mesenchymal_epithelial, fill = mesenchymal_epithelial))+
+  geom_bar()+ facet_grid(organoid~ orig.ident)+
+  theme_bw()+theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+plot_list$hub_01_10_11$n_dataset_mesenchymal_epithelial
+
+plot_list$hub_01_10_11$n_dataset_mesenchymal_epithelial |>
+  ggsave(filename =here(output_path,"n_dataset_mesenchymal_epithelial.png"), dpi = 600)
+
+```
+
+
+
+## Cluster 7
+
+```{r}
+markers_7<- hub_01_10_11 |> JoinLayers()|> FindMarkers(group.by = "mnn_clusters_res0.2_20dims", ident.1 = c(7),min.pct = 0.1,max.cells.per.ident = 500)
+markers_7 |> arrange(desc(avg_log2FC))
+
+markers_7 |> filter(avg_log2FC>0) |> arrange(p_val_adj)
+```
+
+```{r}
+# Function to generate violin plots for a list of gene sets
+generate_vlnplots <- function(seurat_obj, plot_list, slot, gene_sets, group_by, pt_size = 0) {
+  for (name in names(gene_sets)) {
+    plot_list[[slot]][[name]] <- VlnPlot(
+      seurat_obj,
+      features = gene_sets[[name]],
+      group.by = group_by,
+      pt.size = pt_size
+    )
+  }
+  plot_list
+}
+
+# Function to generate dot plots for a list of gene sets
+generate_dotplots <- function(seurat_obj, plot_list, slot, gene_sets, group_by) {
+  for (name in names(gene_sets)) {
+    plot_list[[slot]][[name]] <- DotPlot(
+      seurat_obj,
+      features = gene_sets[[name]],
+      group.by = group_by
+    ) + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  }
+  plot_list
+}
+
+# Function to print and save plots
+save_and_print_plots <- function(plot_list, slot, plot_names, output_path, dpi = 600, height = NULL) {
+  for (plot_name in plot_names) {
+    p <- plot_list[[slot]][[plot_name]]
+    print(p)
+    ggsave(
+      filename = here::here(output_path, paste0(plot_name, ".png")),
+      plot = p,
+      dpi = dpi,
+      height = height
+    )
+  }
+}
+
+```
+
+
+
+```{r}
+# Define your gene sets with meaningful names
+gene_sets_vln <- list(
+  genes_cluster_7 = c("COL3A1", "COL1A1", "PDGFRA", "PDGFRB", "TWIST1", "LUM"),
+  mesenchymal_epithelial_ACTA2 = c("ACTA2"),
+  mesenchymal_epithelial_Col_PDGFR_ACTA2 = c("COL1A1", "PDGFRA", "ACTA2")
+)
+
+gene_sets_dot <- list(
+  genes_cluster_7_dotplot = c("COL3A1", "COL1A1", "PDGFRA", "PDGFRB", "TWIST1", "LUM")
+)
+
+# Generate plots
+plot_list <- generate_vlnplots(hub_01_10_11, plot_list, "hub_01_10_11", gene_sets_vln, "mesenchymal_epithelial")
+plot_list <- generate_dotplots(hub_01_10_11, plot_list, "hub_01_10_11", gene_sets_dot, "mesenchymal_epithelial")
+
+# List of plot names to print and save
+plots_to_handle <- c(
+  "genes_cluster_7",
+  "mesenchymal_epithelial_ACTA2",
+  "mesenchymal_epithelial_Col_PDGFR_ACTA2",
+  "genes_cluster_7_dotplot"
+)
+
+# Save and print plots, specifying heights for dotplots and some violin plots
+save_and_print_plots(plot_list, "hub_01_10_11", plots_to_handle[1:3], output_path, dpi = 600, height = 4)
+save_and_print_plots(plot_list, "hub_01_10_11", plots_to_handle[4], output_path, dpi = 600, height = 4)
+```
+
+```{r}
+markers_7 |> slice_max(avg_log2FC, n=30) |> rownames()
+markers_7 |> slice_max(avg_log2FC, n=30) |> rownames() |> writeClipboard()
+
+```
+
+
+
+```{r}
+plot_list$hub_01_10_11$n_cluster_7_organoid_celltype_by_dataset <- hub_01_10_11|>
+  filter(harmony_clusters_res0.2_20dims==7) |>
+  ggplot(aes(cell_line_cellranger, fill=cell_line_cellranger)) + 
+  geom_bar() + 
+  facet_wrap(~orig.ident)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  ggtitle("Cluster 7")
+
+
+plot_list$hub_01_10_11$n_cluster_7_organoid_celltype_by_dataset
+
+plot_list$hub_01_10_11$n_cluster_7_organoid_celltype_by_dataset|>
+  ggsave(filename =here(output_path,"n_cluster_7_organoid_celltype_by_dataset.png"), dpi = 600, height = 4)
+
+
+plot_list$hub_01_10_11$n_cluster_7_organoid_celltype_by_dataset <- hub_01_10_11|>
+  filter(mnn_clusters_res0.2_20dims==7) |>
+  ggplot(aes(cell_line_cellranger, fill=cell_line_cellranger)) + 
+  geom_bar() + 
+  facet_wrap(~orig.ident)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  ggtitle("Cluster 7")
+
+
+plot_list$hub_01_10_11$freq_cluster_7_organoid_celltype_by_dataset <- hub_01_10_11@meta.data |>
+  as_tibble()  |> 
+  count(cell_line_cellranger,
+        mnn_clusters_res0.2_20dims) |> 
+  group_by(mnn_clusters_res0.2_20dims) |> 
+  mutate(freq=n/sum(n)) |> 
+ # filter(mnn_clusters_res0.2_20dims==7) |>
+  ggplot(aes(mnn_clusters_res0.2_20dims,y=freq, fill = mnn_clusters_res0.2_20dims))+
+  geom_col()+ facet_wrap(~cell_line_cellranger)+
+  theme_bw()+theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+plot_list$hub_01_10_11$freq_cluster_7_organoid_celltype_by_dataset
+
+plot_list$hub_01_10_11$n_cluster_7_organoid_celltype_by_dataset
+
+plot_list$hub_01_10_11$n_cluster_7_organoid_celltype_by_dataset|>
+  ggsave(filename =here(output_path,"n_cluster_7_organoid_celltype_by_dataset.png"), dpi = 600, height = 4)
+
+```
+
+# cell cycle
+
+```{r}
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+hub_01_10_11 <- JoinLayers(hub_01_10_11)
+hub_01_10_11 <- CellCycleScoring(hub_01_10_11, s.features = s.genes, g2m.features = g2m.genes)
+
+
+
+plot_list$hub_01_10_11$umap.mnn_phase <- hub_01_10_11 |> DimPlot(group.by = "Phase", reduction = "umap.mnn")
+plot_list$hub_01_10_11$umap.mnn_phase                                                                
+
+plot_list$hub_01_10_11$umap.mnn_phase <- ggsave(filename =here(output_path,"umap.mnn_phase.png"), dpi = 600)
+```
+
+```{r}
+plot_list$hub_01_10_11$freq_dataset_cell_line_phase <- hub_01_10_11@meta.data |>
+  as_tibble()  |> 
+  count(orig.ident,cell_line_cellranger,
+        Phase) |> 
+  group_by(orig.ident,cell_line_cellranger) |> 
+  mutate(freq=n/sum(n)) |> 
+  ggplot(aes(Phase,y=freq, fill = Phase))+
+  geom_col()+ facet_grid(orig.ident~cell_line_cellranger)+
+  theme_bw()+theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+plot_list$hub_01_10_11$freq_dataset_cell_line_phase
+
+plot_list$hub_01_10_11$freq_dataset_cell_line_phase|> 
+  ggsave(filename =here(output_path,"freq_dataset_cell_line_phase.png"), dpi = 600)
+```
+# Sex
+
+```{r}
+
+plot_list$hub_01_10_11$freq_dataset_cell_line_phase|> 
+  ggsave(filename =here(output_path,"freq_dataset_cell_line_phase.png"), dpi = 600)
+plot_list$hub_01_10_11$XIST_cell_line <- VlnPlot(hub_01_10_11, "XIST", group.by =  "cell_line")
+
+plot_list$hub_01_10_11$XIST_cell_line |>  ggsave(filename =here(output_path,"XIST_cell_line.png"), dpi = 600, height = 4)
+```
+
+
+
+```{r}
+hub_01_10_11$organoid <-  hub_01_10_11 |> separate(cell_line_cellranger, sep = "_", into = "organoid") |> pull(organoid)
+hub_01_10_11$cell_line <-  hub_01_10_11 |> separate(cell_line_cellranger, sep = "_", into = c("organoid", "cell_line")) |> pull(cell_line)
+
+
+hub_01_10_11$organoid.seq_run <-  hub_01_10_11 |> mutate(organoid.seq_run=paste(organoid, orig.ident, sep = "_")) |> pull(organoid.seq_run)
+
+hub_01_10_11$dataset_cell.line_phase_organoid <- hub_01_10_11 |> mutate(dataset_cell.line_phase_organoid=paste(orig.ident,cell_line,Phase,organoid, sep = ".")) |> pull(dataset_cell.line_phase_organoid)
+
+hub_01_10_11$dataset_cell.line_phase <- hub_01_10_11 |> mutate(dataset_cell.line_phase_organoid=paste(orig.ident,cell_line,Phase, sep = ".")) |> pull(dataset_cell.line_phase_organoid)
+
+
+
+
+hub_01_10_11 |>   write_rds(here("intermediate_data", "lung and intestinal organoid integration", "seurat_obj_hub_01_10_11_harmony_mnn.rds"))
+
+```
+

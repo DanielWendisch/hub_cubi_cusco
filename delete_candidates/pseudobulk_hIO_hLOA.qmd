@@ -1,0 +1,1086 @@
+---
+title: "Pseudobulk DGE - lung and intestinal organoids integration"
+format: html
+editor: visual
+---
+#setup
+
+```{r}
+library(tidyverse)
+library(Seurat)
+library(tidyseurat)
+library(here)
+library(SeuratWrappers)
+library(patchwork)
+library(edgeR)
+library(janitor)
+library(xlsx)
+```
+
+
+```{r}
+## cell cycle
+hub_01_10_11 <-  read_rds(here("intermediate_data", "lung and intestinal organoid integration", "seurat_obj_hub_01_10_11_harmony_mnn.rds"))
+
+hub_01_10_11$organoid <- hub_01_10_11 |> separate(cell_line_cellranger,into = c("organoid","cell_line")) |> select(c("organoid","cell_line")) |> pull(organoid)
+
+hub_01_10_11$cell_line <- hub_01_10_11 |> separate(cell_line_cellranger,into = c("organoid","cell_line")) |> select(c("organoid","cell_line")) |> pull(cell_line)
+
+
+plot_list <- list()
+
+path_output <- here("output","pseudobulk_hIO_hLOA")
+dir.create(path_output)
+
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+hub_01_10_11 <- JoinLayers(hub_01_10_11)
+hub_01_10_11 <- CellCycleScoring(hub_01_10_11, s.features = s.genes, g2m.features = g2m.genes)
+
+plot_list$dimplot_umap_mnn_phase <- hub_01_10_11 |> DimPlot(group.by = "Phase", reduction = "umap.mnn")
+plot_list$dimplot_umap_mnn_organoid <- hub_01_10_11 |> DimPlot(group.by = "organoid", reduction = "umap.mnn")
+plot_list$dimplot_umap_mnn_seq_run <- hub_01_10_11 |> DimPlot(group.by = "orig.ident", reduction = "umap.mnn")
+
+
+plot_list$dimplot_umap_mnn_phase 
+plot_list$dimplot_umap_mnn_organoid 
+plot_list$dimplot_umap_mnn_organoid 
+plot_list$dimplot_umap_mnn_seq_run
+```
+
+# pseudobulk
+
+## all cells; 0 + seq_run + cell_cycle + cell_line
+
+```{r}
+bulk_count <- AggregateExpression(hub_01_10_11,
+                                  group.by = "dataset_cell.line_phase_organoid",
+                                  assays = "RNA")
+bulk_count <- bulk_count$RNA
+colnames(bulk_count)
+```
+```{r}
+colnames(bulk_count) <- str_replace_all(colnames(bulk_count), pattern = "-", replacement = "_")
+
+metadata <- tibble(sample=colnames(bulk_count)) |> 
+  separate(sample,
+           into=c("dataset","cell_line","cell_cycle","organoid"),
+           remove = FALSE,
+           sep = "\\.")
+
+# keep only cell lines with replicates
+
+#metadata <- metadata |> filter(cell_line != "BIHi001")
+metadata$cell_line |> unique()
+bulk_count <- bulk_count[,metadata$sample]
+```
+
+
+
+
+```{r}
+
+#We create an edgeR object, with the counts and information on the genes (ID and length)
+y <- DGEList(counts=bulk_count)
+#We now perform normalization steps, which is totally independent from our experimental design
+y <- calcNormFactors(y)
+#Now we can see the scaling factors: these should be "reasonably" similar among all samples
+y$samples
+
+metadata$cell_line <- relevel(as.factor(metadata$cell_line), ref = "BIHi005_A" )
+
+design <- model.matrix(~ 0+ dataset+cell_cycle+cell_line, data=metadata )
+
+keep <- filterByExpr(y, design)
+
+y <- y[keep, , keep.lib.sizes=FALSE] #keep.lib.sizes=FALSE causes the library sizes to be recomputed after the filtering
+y <- calcNormFactors(y)
+
+```
+
+##### mds
+
+```{r}
+#| fig-width: 15
+#| fig-height: 7
+
+mds <- plotMDS(y, plot = FALSE)
+mds_data <- tibble(
+  dim_1 = mds$x,
+  dim_2 = mds$y,
+  sample = rownames(y$samples),  # or rownames(mds$x)
+  group = y$samples$group        # Adjust according to your metadata
+) |> separate(sample, sep = "\\.", into = c("seq_run","cell_line","phase", "organoid"),remove = F)
+
+library(patchwork)
+library(ggrepel)
+
+p1 <- mds_data |> 
+  ggplot(aes(x = dim_1, y = dim_2, color = cell_line, label = sample)) +
+  geom_point(size = 3) +
+  theme_bw() +
+  theme(legend.position = "top")+
+  #geom_label_repel(size = 2) +
+  labs(title = "MDS Plot", x = "Dimension 1", y = "Dimension 2")
+
+p2 <- mds_data |> 
+  ggplot(aes(x = dim_1, y = dim_2, color = phase, label = sample)) +
+  geom_point(size = 3) +
+  #geom_label_repel(size = 2) +
+  theme_bw() +
+    theme(axis.title.y = element_blank(),  # Remove y-axis title
+        axis.text.y = element_blank(),
+        legend.position = "top")  # Remove y-axis tick labels
+
+
+p3 <- mds_data |> 
+  ggplot(aes(x = dim_1, y = dim_2, color = seq_run, label = sample)) +
+  geom_point(size = 3) +
+  #geom_label_repel(size = 2) +
+  theme_bw() +
+  theme(axis.title.y = element_blank(),  # Remove y-axis title
+        axis.text.y = element_blank(),
+        legend.position = "top")  # Remove y-axis tick labels
+
+p4 <- mds_data |> 
+  ggplot(aes(x = dim_1, y = dim_2, color = organoid, label = sample)) +
+  geom_point(size = 3) +
+  #geom_label_repel(size = 2) +
+  theme_bw() +
+  theme(axis.title.y = element_blank(),  # Remove y-axis title
+        axis.text.y = element_blank(),
+        legend.position = "top")  # Remove y-axis tick labels
+
+plot_list$pseudo_bulk_all_cells$mds_dim_1_2 <- p1+p2+p3+p4
+plot_list$pseudo_bulk_all_cells$mds_dim_1_2
+
+plot_list$pseudo_bulk_all_cells$mds_dim_1_2 |> ggsave(filename=here(path_output, "mds_dim_1_2.png"), width = 12, height = 7
+                                                      )
+```
+
+```{r}
+#| fig-width: 15
+#| fig-height: 7
+
+mds_34 <- plotMDS(y, dim = c(3, 4), plot = FALSE)
+
+mds_data_34 <- tibble(
+  dim_3 = mds_34$x,
+  dim_4 = mds_34$y,
+  sample = rownames(y$samples),
+  group = y$samples$group
+) |> separate(sample, sep = "\\.", into = c("seq_run", "cell_line", "phase", "organoid"), remove = FALSE)
+
+library(patchwork)
+library(ggrepel)
+
+p1_34 <- mds_data_34 |> 
+  ggplot(aes(x = dim_3, y = dim_4, color = cell_line, label = sample)) +
+  geom_point(size = 3) +
+  theme_bw() +
+  theme(legend.position = "top")+
+  #geom_label_repel(size = 2) +
+  labs(title = "MDS Plot: Dimensions 3 vs 4", x = "Dimension 3", y = "Dimension 4")
+
+p2_34 <- mds_data_34 |> 
+  ggplot(aes(x = dim_3, y = dim_4, color = phase, label = sample)) +
+  geom_point(size = 3) +
+  #geom_label_repel(size = 2) +
+  theme_bw() +
+  theme(axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        legend.position = "top") +
+  labs(title = "", x = "Dimension 3")
+
+p3_34 <- mds_data_34 |> 
+  ggplot(aes(x = dim_3, y = dim_4, color = seq_run, label = sample)) +
+  geom_point(size = 3) +
+  #geom_label_repel(size = 2) +
+  theme_bw() +
+  theme(axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        legend.position = "top") +
+  labs(title = "", x = "Dimension 3")
+
+p4_34 <- mds_data_34 |> 
+  ggplot(aes(x = dim_3, y = dim_4, color = organoid, label = sample)) +
+  geom_point(size = 3) +
+  #geom_label_repel(size = 2) +
+  theme_bw() +
+  theme(axis.title.y = element_blank(),  # Remove y-axis title
+        axis.text.y = element_blank(),
+        legend.position = "top")  # Re
+
+plot_list$pseudo_bulk_all_cells$mds_dim_3_4 <- p1_34 + p2_34 + p3_34+p4_34 #+ plot_layout(guides = "collect")
+plot_list$pseudo_bulk_all_cells$mds_dim_3_4 
+
+plot_list$pseudo_bulk_all_cells$mds_dim_3_4 |> ggsave(filename=here(path_output, "mds_dim_3_4.png"), width = 12, height = 7)
+
+
+```
+#### glmQLFit
+```{r}
+fit <- glmQLFit(y, design, robust=TRUE)
+head(fit$coefficients)
+```
+
+```{r}
+plot_list$pseudo_bulk_all_cells$disp_QL <- plotQLDisp(fit)
+plot_list$pseudo_bulk_all_cells$disp_QL 
+```
+##### --- UCSFi001_vs_BIHi005 lfc 0
+
+```{r}
+UCSFi001_vs_BIHi005 <- makeContrasts(cell_lineUCSFi001_A, levels=design)
+
+tr <- glmQLFTest(fit, contrast=UCSFi001_vs_BIHi005)
+
+de_genes_all_cells <- topTags(tr, n = nrow(bulk_count)) 
+de_genes_all_cells <- de_genes_all_cells$table|> as_tibble(rownames="gene")
+
+top_genes <- de_genes_all_cells %>%
+  filter(PValue<0.01,
+         abs(logFC)>3) 
+
+plot_list$pseudo_bulk_all_cells$UCSFi001_A_vs_BiH005$vulcano<- ggplot(de_genes_all_cells, aes(x = logFC, y = -log10(PValue))) +
+  geom_point(alpha = 0.6) +
+  geom_text_repel(data = top_genes, aes(label = gene) ) +
+  theme_minimal() +
+  xlab("log2 Fold Change") +
+  ylab("-log10(P-value)")+
+  ggtitle("BIHi005<----------------------------->UCSFi001")
+
+plot_list$pseudo_bulk_all_cells$UCSFi001_A_vs_BiH005$vulcano
+plot_list$pseudo_bulk_all_cells$UCSFi001_A_vs_BiH005$vulcano |> ggsave(filename=here(path_output, "UCSFi001_A_vs_BiH005vulcano.png"), width = 12, height = 7)
+
+```
+
+
+```{r}
+top_genes |> filter(gene=="HOXD4")
+```
+
+##### --- UCSFi001_vs_BIHi005 Foldchange 2
+
+```{r}
+UCSFi001_vs_BIHi005 <- makeContrasts(cell_lineUCSFi001_A, levels=design)
+
+tr_2 <- glmTreat(fit, contrast=UCSFi001_vs_BIHi005, lfc=1)
+
+de_genes_all_cells_2 <- topTags(tr_2, n = nrow(bulk_count)) 
+de_genes_all_cells_2 <- de_genes_all_cells_2$table|> as_tibble(rownames="gene")
+
+top_genes_2 <- de_genes_all_cells_2 %>%
+  filter(PValue<0.01,
+         abs(logFC)>3) 
+
+plot_list$pseudo_bulk_all_cells$UCSFi001_A_vs_BiH005$vulcano_2<- de_genes_all_cells_2 |>
+  mutate(fdr_00.5=if_else(FDR>0.05,"significant", "not_sig")) |> 
+  ggplot(aes(x = logFC, y = -log10(PValue))) +
+  geom_point(alpha = 0.6) +
+  geom_text_repel(data = top_genes_2, aes(label = gene) ) +
+  theme_minimal() +
+  xlab("log2 Fold Change") +
+  ylab("-log10(P-value)")+
+  ggtitle("BIH005-------------UCSF001")
+
+
+
+
+plot_list$pseudo_bulk_all_cells$UCSFi001_A_vs_BiH005$vulcano_2
+```
+
+
+```{r}
+plot_list$pseudo_bulk_all_cells$UCSFi001_A_vs_BiH005$vulcano_2_just_color<- de_genes_all_cells_2 |>
+  mutate(fdr_00.5=if_else(FDR<0.05,"significant", "not_sig")) |> 
+  ggplot(aes(x = logFC, y = -log10(PValue), color=fdr_00.5)) +
+  geom_point(alpha = 0.6) +
+  #geom_text_repel(data = top_genes_2, aes(label = gene) ) +
+  theme_minimal() +
+  xlab("log2 Fold Change") +
+  ylab("-log10(P-value)")+
+  ggtitle("BIH005-------------UCSF001")
+
+plot_list$pseudo_bulk_all_cells$UCSFi001_A_vs_BiH005$vulcano_1_just_color<- de_genes_all_cells |>
+  mutate(fdr_00.5=if_else(FDR<0.05,"significant", "not_sig")) |> 
+  ggplot(aes(x = logFC, y = -log10(PValue), color=fdr_00.5)) +
+  geom_point(alpha = 0.6) +
+  #geom_text_repel(data = top_genes_2, aes(label = gene) ) +
+  theme_minimal() +
+  xlab("log2 Fold Change") +
+  ylab("-log10(P-value)")
+
+
+plot_list$pseudo_bulk_all_cells$UCSFi001_A_vs_BiH005$vulcano_1_just_color/
+plot_list$pseudo_bulk_all_cells$UCSFi001_A_vs_BiH005$vulcano_2_just_color
+  
+```
+#### Excel
+
+```{r}
+de_genes_all_cells_2 |>
+  mutate(fdr_00.5=if_else(FDR<0.05,"significant", "not_sig")) |> 
+  filter(fdr_00.5=="significant", logFC>0) |>
+  write.xlsx(here(path_output, "de_genes_all_cells_fc2_UCSFupvsBIH005.xlsx"))
+             
+de_genes_all_cells_2 |>
+  mutate(fdr_00.5=if_else(FDR<0.05,"significant", "not_sig")) |> 
+  filter(fdr_00.5=="significant", logFC>0)                                             
+```
+
+```{r}
+de_genes_all_cells_2 |>
+  mutate(fdr_00.5=if_else(FDR<0.05,"significant", "not_sig")) |> 
+  filter(fdr_00.5=="significant", logFC<0) 
+
+de_genes_all_cells_2 |>
+  mutate(fdr_00.5=if_else(FDR<0.05,"significant", "not_sig")) |> 
+  filter(fdr_00.5=="significant", logFC<0) |>
+  write.xlsx(here(path_output, "de_genes_all_cells_fc2_UCSFvsBIH005up.xlsx"))
+```
+
+
+```{r}
+de_genes_all_cells_2|> filter(logFC>0) |> arrange(desc(logFC))
+de_genes_all_cells_2 |> filter(logFC>0) |>slice_min(PValue, n=100) |> pull(gene) |> writeClipboard()
+```
+
+
+```{r}
+de_genes_all_cells |> filter(logFC>0) |> arrange(desc(logFC))
+de_genes_all_cells |> filter(logFC>0)|> arrange(PValue)
+de_genes_all_cells |> filter(logFC>0) |>slice_min(PValue, n=100) |> pull(gene) |> writeClipboard()
+```
+
+
+# genes up in BIH005
+
+```{r}
+de_genes_all_cells |> filter(logFC<0) |>slice_min(PValue, n=100)
+de_genes_all_cells |> filter(logFC<0) |>slice_min(PValue, n=100) |> arrange(desc(logCPM))
+de_genes_all_cells |> filter(logFC<0) |>slice_min(PValue, n=50) |> pull(gene) |> writeClipboard()
+```
+
+
+```{r}
+de_genes_all_cells_2|> filter(logFC<0) |> arrange(desc(logFC))
+de_genes_all_cells_2 |> filter(logFC<0) |>slice_min(PValue, n=100)  |> write_excel_csv(here(path_output, "de_genes_all_cells_2.xls"))
+```
+
+#### p value histo
+
+```{r}
+(de_genes_all_cells |>
+  mutate(FDR_0.05=if_else(FDR>0.05,"neg","pos")) |> 
+  ggplot(aes(PValue, fill = FDR_0.05))+ geom_histogram(bins = 100) +
+   ggtitle("FTest")+
+   theme_bw()) /
+(de_genes_all_cells_2 |> 
+    mutate(FDR_0.05=if_else(FDR>0.05,"neg","pos")) |> 
+  ggplot(aes(PValue, fill = FDR_0.05))+ geom_histogram(bins = 100) +
+  ggtitle("Foldchange larger 2 (glmTreat)")+
+   theme_bw())
+
+```
+
+
+##### single-cell gene expression
+
+```{r}
+
+(
+  hub_01_10_11|>
+  filter(cell_line=="UCSFi001") |>
+  VlnPlot(features = "APOBEC3B",
+          group.by = "dataset_cell.line_phase_organoid") +
+  NoLegend()+
+  theme(axis.title.x = element_blank(),
+        axis.text.x  = element_blank(),
+        axis.title.y = element_blank())+
+    ggtitle(subtitle = "text", label = "dings")
+ ) +
+
+(hub_01_10_11|>
+  filter(cell_line=="BIHi005") |>
+  VlnPlot(features = "APOBEC3B",
+          group.by = "dataset_cell.line_phase_organoid")+
+  NoLegend()+
+   theme(plot.title = element_blank()))
+
+
+plot_comparison <- function(cell_line_1, cell_line_2,group,feature ){
+  plot_x <- (hub_01_10_11|> 
+  filter(cell_line==cell_line_1) |> 
+  VlnPlot(features = feature,
+          group.by = group) +
+  NoLegend()+
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x  = element_blank())+
+    ggtitle(label = feature, subtitle = cell_line_1)
+ ) +
+
+(hub_01_10_11|> 
+  filter(cell_line==cell_line_2) |> 
+  VlnPlot(features = feature,
+          group.by = group)+
+  NoLegend()+
+   theme(#plot.title = element_blank(),
+         axis.title.y = element_text(cell_line_2))+
+    ggtitle(label = " ", subtitle = cell_line_2)
+)
+  return(plot_x)
+}
+
+list_x <- list()
+
+list_x$up_UCSFi001$APOBEC3B <- plot_comparison("UCSFi001", "BIHi005",
+                group = "dataset_cell.line_phase",
+                feature = "APOBEC3B")
+
+list_x$up_UCSFi001$MIR4458HG <- plot_comparison("UCSFi001", "BIHi005",group = "dataset_cell.line_phase" , feature = "MIR4458HG")
+list_x$up_UCSFi001$FIRRE <-plot_comparison("UCSFi001", "BIHi005",group = "dataset_cell.line_phase" , feature = "FIRRE")
+list_x$up_UCSFi001$ERAP2 <-plot_comparison("UCSFi001", "BIHi005",group = "dataset_cell.line_phase" , feature = "ERAP2")
+list_x$up_UCSFi001$S100A9 <-plot_comparison("UCSFi001", "BIHi005",group = "dataset_cell.line_phase" , feature = "S100A9")
+list_x$up_UCSFi001$FABP7 <-plot_comparison("UCSFi001", "BIHi005",group = "dataset_cell.line_phase" , feature = "FABP7")
+list_x$up_UCSFi001$MSMB <-plot_comparison("UCSFi001", "BIHi005",group = "dataset_cell.line_phase" , feature = "MSMB")
+
+
+plot_list$pseudo_bulk_all_cells$UCSFi001_A_vs_BiH005$sc_vln_dataset_cell.line_phase$up_UCSFi001 <- list_x$up_UCSFi001
+
+
+
+walk2(
+  .x = list_x$up_UCSFi001,
+  .y = names(list_x$up_UCSFi001),
+  ~ ggsave(
+      filename = here(path_output, paste0(.y, ".png")),
+      plot = .x,
+      width = 12,
+      height = 7
+    )
+)
+```
+
+
+```{r}
+
+list_x$up_BIHi005$NLRP2 <- plot_comparison("UCSFi001", "BIHi005",group = "dataset_cell.line_phase" , feature = "NLRP2")
+list_x$up_BIHi005$H1_1 <- plot_comparison("UCSFi001", "BIHi005",group = "dataset_cell.line_phase" , feature = "H1-1")
+list_x$up_BIHi005$ZNF37A <- plot_comparison("UCSFi001", "BIHi005",group = "dataset_cell.line_phase" , feature = "ZNF37A")
+list_x$up_BIHi005$TBL1Y <- plot_comparison("UCSFi001", "BIHi005",group = "dataset_cell.line_phase" , feature = "TBL1Y")
+list_x$up_BIHi005$SORD2P <- plot_comparison("UCSFi001", "BIHi005",group = "dataset_cell.line_phase" , feature = "SORD2P")
+list_x$up_BIHi005$CHCHD2 <- plot_comparison("UCSFi001", "BIHi005",group = "dataset_cell.line_phase" , feature = "CHCHD2")
+list_x$up_BIHi005$SELENOW <- plot_comparison("UCSFi001", "BIHi005",group = "dataset_cell.line_phase" , feature = "SELENOW")
+
+plot_list$pseudo_bulk_all_cells$UCSFi001_A_vs_BiH005$sc_vln_dataset_cell.line_phase$up_BIHi005 <- list_x$up_BIHi005
+list_x$up_BIHi005
+
+
+walk2(
+  .x = list_x$up_BIHi005,
+  .y = names(list_x$up_BIHi005),
+  ~ ggsave(
+      filename = here(path_output, paste0(.y, ".png")),
+      plot = .x,
+      width = 12,
+      height = 7
+    )
+)
+
+```
+```{r}
+list_x$up_BIHi005$SELENOW 
+
+plot_comparison("UCSFi001-A", "BIHi005-A",group = "dataset_cell.line_phase_organoid" , feature = "SELENOW")
+plot_comparison("UCSFi001-A", "BIHi005-A",group = "dataset_cell.line_phase_organoid" , feature = "APOBEC3B")
+
+```
+
+
+```{r}
+
+metadata_g1 <- metadata |>
+  filter(cell_cycle=="G1")
+
+bulk_count_g1 <- bulk_count[,metadata_g1$sample]
+```
+
+
+# all cells; 0 + organoid + seq_run + cell_cycle + cell_line
+
+
+
+```{r}
+
+design_organoid <- model.matrix(~ 0+ organoid+dataset+cell_cycle+cell_line, data=metadata )
+
+```
+
+#### glmQLFit
+```{r}
+fit_organoid <- glmQLFit(y, design_organoid, robust=TRUE)
+head(fit_organoid$coefficients)
+```
+
+```{r}
+plot_list$pseudo_bulk_all_cells_w_organoid$disp_QL <- plotQLDisp(fit_organoid)
+plot_list$pseudo_bulk_all_cells_w_organoid$disp_QL 
+```
+##### --- UCSFi001_vs_BIHi005 lfc 1.5
+
+```{r}
+UCSFi001_vs_BIHi005 <- makeContrasts(cell_lineUCSFi001_A, levels=design_organoid)
+
+tr_organoid <- glmTreat(fit_organoid, contrast=UCSFi001_vs_BIHi005, lfc=0)
+
+de_genes_all_cells_organoid <- topTags(tr_organoid, n = nrow(bulk_count)) 
+de_genes_all_cells_organoid <- de_genes_all_cells_organoid$table|> as_tibble(rownames="gene")
+
+top_genes_organoid <- de_genes_all_cells_organoid %>%
+  filter(PValue<0.01,
+         abs(logFC)>3) 
+
+plot_list$pseudo_bulk_all_cells_w_organoid$UCSFi001_A_vs_BiH005$vulcano<- ggplot(de_genes_all_cells_organoid, aes(x = logFC, y = -log10(PValue))) +
+  geom_point(alpha = 0.6) +
+  geom_text_repel(data = top_genes_organoid, aes(label = gene) ) +
+  theme_minimal() +
+  xlab("log2 Fold Change") +
+  ylab("-log10(P-value)")
+
+plot_list$pseudo_bulk_all_cells_w_organoid$UCSFi001_A_vs_BiH005$vulcano
+```
+
+##### --- UCSFi001_vs_BIHi005 fold change 2
+
+```{r}
+UCSFi001_vs_BIHi005 <- makeContrasts(cell_lineUCSFi001_A, levels=design_organoid)
+
+tr_organoid_2 <- glmTreat(fit_organoid, contrast=UCSFi001_vs_BIHi005, lfc=1)
+
+de_genes_all_cells_organoid_2 <- topTags(tr_organoid_2, n = nrow(bulk_count)) 
+de_genes_all_cells_organoid_2 <- de_genes_all_cells_organoid_2$table|> as_tibble(rownames="gene")
+
+top_genes_organoid_2 <- de_genes_all_cells_organoid_2 %>%
+  filter(PValue<0.01,
+         abs(logFC)>3) 
+
+plot_list$pseudo_bulk_all_cells_w_organoid$UCSFi001_A_vs_BiH005$vulcano_2<- ggplot(de_genes_all_cells_organoid_2, aes(x = logFC, y = -log10(PValue))) +
+  geom_point(alpha = 0.6) +
+  geom_text_repel(data = top_genes_organoid_2, aes(label = gene) ) +
+  theme_minimal() +
+  xlab("log2 Fold Change") +
+  ylab("-log10(P-value)")
+
+plot_list$pseudo_bulk_all_cells_w_organoid$UCSFi001_A_vs_BiH005$vulcano_2
+```
+
+
+```{r}
+de_genes_all_cells_organoid |> filter(logFC>0) |> arrange(desc(logFC))
+de_genes_all_cells_organoid |> filter(logFC>0)|> arrange(PValue)
+de_genes_all_cells_organoid |> filter(logFC>0) |>slice_min(PValue, n=100) |> pull(gene) |> writeClipboard()
+```
+
+
+
+
+```{r}
+de_genes_all_cells_organoid |> filter(logFC<0) |>slice_min(PValue, n=100)
+de_genes_all_cells_organoid |> filter(logFC<0) |>slice_min(PValue, n=100) |> arrange(desc(logCPM))
+de_genes_all_cells_organoid |> filter(logFC<0) |>slice_min(PValue, n=50) |> pull(gene) |> writeClipboard()
+```
+
+
+
+
+##### single-cell gene expression
+
+```{r}
+
+plot_comparison <- function(cell_line_1, cell_line_2,group,feature ){
+  plot_x <- (hub_01_10_11|> 
+  filter(cell_line==cell_line_1) |> 
+  VlnPlot(features = feature,
+          group.by = group) +
+  NoLegend()+
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x  = element_blank())+
+    ggtitle(label = feature, subtitle = cell_line_1)
+ ) +
+
+(hub_01_10_11|> 
+  filter(cell_line==cell_line_2) |> 
+  VlnPlot(features = feature,
+          group.by = group)+
+  NoLegend()+
+   theme(#plot.title = element_blank(),
+         axis.title.y = element_text(cell_line_2))+
+    ggtitle(label = " ", subtitle = cell_line_2)
+)
+  return(plot_x)
+}
+
+list_x <- list()
+
+list_x$up_UCSFi001$APOBEC3B <- plot_comparison("UCSFi001-A", "BIHi005-A",
+                group = "dataset_cell.line_phase",
+                feature = "APOBEC3B")
+
+list_x$up_UCSFi001$MIR4458HG <- plot_comparison("UCSFi001-A", "BIHi005-A",group = "dataset_cell.line_phase" , feature = "MIR4458HG")
+list_x$up_UCSFi001$FIRRE <-plot_comparison("UCSFi001-A", "BIHi005-A",group = "dataset_cell.line_phase" , feature = "FIRRE")
+list_x$up_UCSFi001$ERAP2 <-plot_comparison("UCSFi001-A", "BIHi005-A",group = "dataset_cell.line_phase" , feature = "ERAP2")
+list_x$up_UCSFi001$S100A9 <-plot_comparison("UCSFi001-A", "BIHi005-A",group = "dataset_cell.line_phase" , feature = "S100A9")
+list_x$up_UCSFi001$FABP7 <-plot_comparison("UCSFi001-A", "BIHi005-A",group = "dataset_cell.line_phase" , feature = "FABP7")
+list_x$up_UCSFi001$MSMB <-plot_comparison("UCSFi001-A", "BIHi005-A",group = "dataset_cell.line_phase" , feature = "MSMB")
+
+
+plot_list$pseudo_bulk_all_cells$UCSFi001_A_vs_BiH005$sc_vln_dataset_cell.line_phase$up_UCSFi001 <- list_x$up_UCSFi001
+plot_list$pseudo_bulk_all_cells$UCSFi001_A_vs_BiH005$sc_vln_dataset_cell.line_phase$up_UCSFi001
+```
+
+
+```{r}
+
+list_x$up_BIHi005$NLRP2 <- plot_comparison("UCSFi001-A", "BIHi005-A",group = "dataset_cell.line_phase" , feature = "NLRP2")
+list_x$up_BIHi005$H1_1 <- plot_comparison("UCSFi001-A", "BIHi005-A",group = "dataset_cell.line_phase" , feature = "H1-1")
+list_x$up_BIHi005$ZNF37A <- plot_comparison("UCSFi001-A", "BIHi005-A",group = "dataset_cell.line_phase" , feature = "ZNF37A")
+list_x$up_BIHi005$TBL1Y <- plot_comparison("UCSFi001-A", "BIHi005-A",group = "dataset_cell.line_phase" , feature = "TBL1Y")
+list_x$up_BIHi005$SORD2P <- plot_comparison("UCSFi001-A", "BIHi005-A",group = "dataset_cell.line_phase" , feature = "SORD2P")
+list_x$up_BIHi005$CHCHD2 <- plot_comparison("UCSFi001-A", "BIHi005-A",group = "dataset_cell.line_phase" , feature = "CHCHD2")
+list_x$up_BIHi005$SELENOW <- plot_comparison("UCSFi001-A", "BIHi005-A",group = "dataset_cell.line_phase" , feature = "SELENOW")
+
+plot_list$pseudo_bulk_all_cells$UCSFi001_A_vs_BiH005$sc_vln_dataset_cell.line_phase$up_BIHi005 <- list_x$up_BIHi005
+list_x$up_BIHi005
+
+```
+```{r}
+list_x$up_BIHi005$SELENOW 
+
+plot_comparison("UCSFi001-A", "BIHi005-A",group = "dataset_cell.line_phase_organoid" , feature = "SELENOW")
+plot_comparison("UCSFi001-A", "BIHi005-A",group = "dataset_cell.line_phase_organoid" , feature = "APOBEC3B")
+plot_comparison("UCSFi001-A", "BIHi005-A",group = "dataset_cell.line_phase_organoid" , feature = "MIR4458HG")
+
+```
+
+
+```{r}
+
+metadata_g1 <- metadata |>
+  filter(cell_cycle=="G1")
+
+bulk_count_g1 <- bulk_count[,metadata_g1$sample]
+```
+
+
+
+
+
+
+# all cell model comparison
+
+```{r}
+plot_list$pseudo_bulk_all_cells$UCSFi001_A_vs_BiH005$vulcano +
+
+plot_list$pseudo_bulk_all_cells_w_organoid$UCSFi001_A_vs_BiH005$vulcano
+```
+
+```{r}
+de_genes_all_cells_organoid
+```
+
+```{r}
+(de_genes_all_cells_organoid |>
+  mutate(FDR_0.05=if_else(FDR>0.05,"neg","pos")) |> 
+  ggplot(aes(PValue, fill = FDR_0.05))+ geom_histogram(bins = 100) + ggtitle("model with co-factor organoid")) /
+(de_genes_all_cells |> 
+    mutate(FDR_0.05=if_else(FDR>0.05,"neg","pos")) |> 
+  ggplot(aes(PValue, fill = FDR_0.05))+ geom_histogram(bins = 100) +
+  ggtitle("model without co-factor but with groups"))
+
+```
+```{r}
+hub_01_10_11 |> VlnPlot()
+
+de_genes_all_cells_organoid |> mutate(rank_FDR=rank(FDR)) |> filter(rank_FDR>1000)
+```
+
+
+```{r}
+plot_comparison("UCSFi001-A", "BIHi005-A",group = "dataset_cell.line_phase_organoid" , feature = "RPS8")
+plot_comparison("UCSFi001-A", "BIHi005-A",group = "dataset_cell.line_phase_organoid" , feature = "ANKS4B")
+plot_comparison("UCSFi001-A", "BIHi005-A",group = "dataset_cell.line_phase_organoid" , feature = "SLC19A3")
+
+
+
+```
+
+```{r}
+de_genes_all_cells_organoid |> ggplot(aes(logCPM,-log(PValue)))+geom_point()
+```
+
+```{r}
+de_genes_all_cells |> mutate(model="without_organoid") |>
+  bind_rows(de_genes_all_cells_organoid |> mutate(model="with_organoid")) |> mutate(direction=if_else(logFC>0, "up", "down")) |>
+  mutate(FDR_0.05=if_else(FDR>0.05,"neg","pos")) |> 
+  ggplot(aes(PValue, fill = FDR_0.05))+ geom_histogram(bins = 100) + facet_grid(model~direction)
+```
+### FC >2
+
+```{r}
+
+de_genes_all_cells_2 |> mutate(model="without_organoid") |>
+  bind_rows(de_genes_all_cells_organoid_2 |> mutate(model="with_organoid")) |> mutate(direction=if_else(logFC>0, "up", "down")) |>
+  mutate(FDR_0.05=if_else(FDR>0.05,"neg","pos")) |> 
+  ggplot(aes(PValue, fill = FDR_0.05))+ geom_histogram(bins = 100) + facet_grid(model~direction)
+```
+```{r}
+de_genes_all_cells_2 |> filter(FDR<0.05)
+
+de_genes_all_cells_2 |> filter(FDR<0.05, logFC>0) |> pull(gene)
+de_genes_all_cells_2 |> filter(FDR<0.05, logFC>0) |> pull(gene) |> writeClipboard()
+```
+
+
+```{r}
+de_genes_all_cells_2 |> filter(FDR<0.05, logFC<0)
+
+de_genes_all_cells_2 |> filter(FDR<0.05, logFC<0) |> pull(gene) |> writeClipboard()
+
+
+
+```
+
+
+
+
+# G1 cells 0 + dataset + organoid + cell_line
+
+```{r}
+
+
+#We create an edgeR object, with the counts and information on the genes (ID and length)
+dge_list_g1 <- DGEList(counts=bulk_count_g1)
+#We now perform normalization steps, which is totalldge_list_g1 independent from our experimental design
+dge_list_g1 <- calcNormFactors(dge_list_g1)
+#Now we can see the scaling factors: these should be "reasonabldge_list_g1" similar among all samples
+dge_list_g1$samples
+
+metadata_g1$cell_line <- relevel(as.factor(metadata_g1$cell_line), ref = "BIHi005_A" )
+
+design <- model.matrix(~ 0+ dataset+organoid+ cell_line, data=metadata_g1 )
+
+keep <- filterByExpr(dge_list_g1, design)
+
+dge_list_g1 <- dge_list_g1[keep, , keep.lib.sizes=FALSE] #keep.lib.sizes=FALSE causes the librardge_list_g1 sizes to be recomputed after the filtering
+dge_list_g1 <- calcNormFactors(dge_list_g1)
+
+```
+
+```{r}
+#| fig-width: 15
+#| fig-height: 7
+
+mds <- plotMDS(dge_list_g1, plot = FALSE)
+mds_data <- tibble(
+  dim_1 = mds$x,
+  dim_2 = mds$y,
+  sample = rownames(dge_list_g1$samples),  # or rownames(mds$x)
+  group = dge_list_g1$samples$group        # Adjust according to dge_list_g1our metadata_g1
+) |> separate(sample, sep = "\\.", into = c("seq_run","cell_line","phase"),remove = F)
+
+
+
+p1 <- mds_data |> 
+  ggplot(aes(x = dim_1, y = dim_2, color = cell_line, label = sample)) +
+  geom_point(size = 3) +
+  theme_bw() +
+  geom_label_repel(size = 3) +
+  labs(title = "MDS Plot", x = "Dimension 1", y = "Dimension 2")
+
+p2 <- mds_data |> 
+  ggplot(aes(x = dim_1, y = dim_2, color = phase, label = sample)) +
+  geom_point(size = 3) +
+  geom_label_repel(size = 3) +
+  theme_bw() +
+  theme(axis.title.y = element_blank(),  
+        axis.text.y = element_blank())  
+
+
+p3 <- mds_data |> 
+  ggplot(aes(x = dim_1, y = dim_2, color = seq_run, label = sample)) +
+  geom_point(size = 3) +
+  geom_label_repel(size = 3) +
+  theme_bw() +
+  theme(axis.title.y = element_blank(),  
+        axis.text.y = element_blank())  
+
+plot_list$pseudo_bulk_g1_cells$mds_dim_1_2 <-  p1+p2+p3 
+
+plot_list$pseudo_bulk_g1_cells$mds_dim_1_2
+```
+
+```{r}
+#| fig-width: 15
+#| fig-height: 7
+
+mds_34 <- plotMDS(dge_list_g1, dim = c(3, 4), plot = FALSE)
+
+mds_data_34 <- tibble(
+  dim_3 = mds_34$x,
+  dim_4 = mds_34$y,
+  sample = rownames(dge_list_g1$samples),
+  group = dge_list_g1$samples$group
+) |> separate(sample, sep = "\\.", into = c("seq_run", "cell_line", "phase"), remove = FALSE)
+
+
+
+p1_34 <- mds_data_34 |> 
+  ggplot(aes(x = dim_3, y = dim_4, color = cell_line, label = sample)) +
+  geom_point(size = 3) +
+  theme_bw() +
+  geom_label_repel(size = 3) +
+  labs(title = "MDS Plot: Dimensions 3 vs 4", x = "Dimension 3", y = "Dimension 4")
+
+p2_34 <- mds_data_34 |> 
+  ggplot(aes(x = dim_3, y = dim_4, color = phase, label = sample)) +
+  geom_point(size = 3) +
+  geom_label_repel(size = 3) +
+  theme_bw() +
+  theme(axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()) +
+  labs(title = "", x = "Dimension 3")
+
+p3_34 <- mds_data_34 |> 
+  ggplot(aes(x = dim_3, y = dim_4, color = seq_run, label = sample)) +
+  geom_point(size = 3) +
+  geom_label_repel(size = 3) +
+  theme_bw() +
+  theme(axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()) +
+  labs(title = "", x = "Dimension 3")
+
+plot_list$pseudo_bulk_g1_cells$mds_dim_3_4 <- p1_34 + p2_34 + p3_34 + plot_layout(guides = "collect")
+
+plot_list$pseudo_bulk_g1_cells$mds_dim_3_4
+```
+
+#### fit
+```{r}
+fit <- glmQLFit(dge_list_g1, design, robust=TRUE)
+head(fit$coefficients)
+```
+
+```{r}
+plot_list$pseudo_bulk_g1_cells$disp_QL <- plotQLDisp(fit)
+plot_list$pseudo_bulk_g1_cells$disp_QL
+```
+#### UCSFi001_vs_BIHi005
+
+```{r}
+UCSFi001_vs_BIHi005 <- makeContrasts(cell_lineUCSFi001_A, levels=design)
+
+tr <- glmTreat(fit, contrast=UCSFi001_vs_BIHi005, lfc=log2(1.5))
+
+top_tags <- topTags(tr, n = nrow(bulk_count_g1)) 
+top_tags <- top_tags$table|> as_tibble(rownames="gene")
+
+top_tags |> ggplot(aes(logFC, -log(PValue)))+geom_point()
+
+
+top_genes <- top_tags %>%
+  filter(PValue<0.01,
+         abs(logFC)>3) 
+
+plot_list$pseudo_bulk_g1_cells$UCSFi001_A_vs_BiH005$vulcano <- ggplot(top_tags, aes(x = logFC, y = -log10(PValue))) +
+  geom_point(alpha = 0.6) +
+  geom_text_repel(data = top_genes, aes(label = gene) ) +
+  theme_minimal() +
+  xlab("log2 Fold Change") +
+  ylab("-log10(P-value)")
+
+plot_list$pseudo_bulk_g1_cells$UCSFi001_A_vs_BiH005$vulcano
+```
+
+```{r}
+top_tags |> filter(logFC>0) |> arrange(desc(logFC))
+top_tags |> filter(logFC>0)|> arrange(PValue)
+
+top_tags |> filter(logFC>0) |>slice_min(PValue, n=100) |> pull(gene) |> writeClipboard()
+```
+
+
+
+
+```{r}
+top_tags |> filter(PValue<0.001) |> arrange(desc(logFC))
+top_tags |> filter(logFC<0)|> arrange(PValue)
+top_tags |> filter(logFC<0) |>slice_min(PValue, n=100) |> pull(gene) |> writeClipboard()
+```
+
+```{r}
+library("data.tree")
+
+
+find_list_elements <- function(x, path = "") {
+  if (is.list(x) && !inherits(x, "gg") && !inherits(x, "ggplot")) {
+    if (path != "") cat(path, "\n")  # Print only non-root lists
+    for (name in names(x)) {
+      new_path <- if (path == "") name else paste0(path, "$", name)
+      find_list_elements(x[[name]], new_path)
+    }
+  }
+}
+
+
+find_list_elements(plot_list)
+
+
+plot_list$pseudo_bulk_all_cells$UCSFi001_A_vs_BiH005$vulcano + ggtitle("UCSFi001 vs. BiH005")
+
+plot_list$pseudo_bulk_all_cells$UCSFi001_A_vs_BiH005$sc_vln_dataset_cell.line_phase$up_BIHi005$NLRP2
+```
+
+
+```{r}
+#|  fig-height: 15
+
+(plot_list$pseudo_bulk_g1_cells$UCSFi001_A_vs_BiH005$vulcano + ggtitle("UCSFi001 vs. BiH005") )+
+
+(plot_list$pseudo_bulk_all_cells$UCSFi001_A_vs_BiH005$sc_vln_dataset_cell.line_phase$up_UCSFi001$APOBEC3B /
+
+plot_list$pseudo_bulk_all_cells$UCSFi001_A_vs_BiH005$sc_vln_dataset_cell.line_phase$up_BIHi005$NLRP2) + plot_layout(widths = c(2, 1))
+
+ggsave(filename  = here(path_output, paste0("dings.png")), height = 15, width = 15)
+
+```
+
+# HOXD9
+
+```{r}
+hub_01_10_11 |> FeaturePlot("HOXD9", reduction = "umap.mnn")
+```
+
+```{r}
+hoxd9_overlap <- c("SOCS2","FOXC2","EMX2","DLX5","DLX6","HOXC5","ZNF558","HOXD3","MEOX2","ZNF662")
+genesets <- list()
+genesets$hox_d9 <- hoxd9_overlap
+
+hub_01_10_11 <- AddModuleScore(hub_01_10_11, features = genesets, name = "HOX_D9")
+```
+
+
+```{r}
+hub_01_10_11 |> FeaturePlot("HOX_D91", reduction = "umap.mnn") + ggtitle("HOX_D9 Module Score")
+
+hub_01_10_11 |> VlnPlot("HOX_D91", group.by = "mnn_clusters_res0.2_20dims")+ ggtitle("HOX_D9 Module Score")
+
+hub_01_10_11 |> VlnPlot("HOX_D91", group.by = "cell_line_cellranger")+ ggtitle("HOX_D9 Module Score")
+
+hub_01_10_11 |> filter(mnn_clusters_res0.2_20dims!=7) |>  VlnPlot("HOX_D91", group.by = "cell_line_cellranger", pt.size = 0)+ ggtitle("HOX_D9 Module Score, without cluster 7")
+
+```
+
+
+
+
+
+# remove cluster 7
+
+## all cells; 0 + seq_run + cell_cycle + cell_line
+
+```{r}
+bulk_count <- AggregateExpression(hub_01_10_11 |> filter(mnn_clusters_res0.2_20dims!="7"),
+                                  group.by = "dataset_cell.line_phase_organoid",
+                                  assays = "RNA")
+bulk_count <- bulk_count$RNA
+colnames(bulk_count)
+```
+
+```{r}
+colnames(bulk_count) <- str_replace_all(colnames(bulk_count), pattern = "-", replacement = "_")
+
+metadata <- tibble(sample=colnames(bulk_count)) |> 
+  separate(sample,
+           into=c("dataset","cell_line","cell_cycle","organoid"),
+           remove = FALSE,
+           sep = "\\.")
+
+# keep only cell lines with replicates
+
+#metadata <- metadata |> filter(cell_line != "BIHi001")
+metadata$cell_line |> unique()
+bulk_count <- bulk_count[,metadata$sample]
+```
+
+
+
+
+```{r}
+
+#We create an edgeR object, with the counts and information on the genes (ID and length)
+y <- DGEList(counts=bulk_count)
+#We now perform normalization steps, which is totally independent from our experimental design
+y <- calcNormFactors(y)
+#Now we can see the scaling factors: these should be "reasonably" similar among all samples
+y$samples
+
+metadata$cell_line <- relevel(as.factor(metadata$cell_line), ref = "BIHi005_A" )
+
+design <- model.matrix(~ 0+ dataset+cell_cycle+cell_line, data=metadata )
+
+keep <- filterByExpr(y, design)
+
+y <- y[keep, , keep.lib.sizes=FALSE] #keep.lib.sizes=FALSE causes the library sizes to be recomputed after the filtering
+y <- calcNormFactors(y)
+
+```
+
+
+
+
+
+```{r}
+fit <- glmQLFit(y, design, robust=TRUE)
+head(fit$coefficients)
+```
+
+##### --- UCSFi001_vs_BIHi005 lfc 0
+
+```{r}
+UCSFi001_vs_BIHi005 <- makeContrasts(cell_lineUCSFi001_A, levels=design)
+
+tr <- glmTreat(fit, contrast=UCSFi001_vs_BIHi005, lfc=1)
+
+de_genes_all_cells <- topTags(tr, n = nrow(bulk_count)) 
+de_genes_all_cells <- de_genes_all_cells$table|> as_tibble(rownames="gene")
+
+top_genes <- de_genes_all_cells %>%
+  filter(PValue<0.01,
+         abs(logFC)>3) 
+
+pseudo_bulk_all_cells_no_7 <- ggplot(de_genes_all_cells, aes(x = logFC, y = -log10(PValue))) +
+  geom_point(alpha = 0.6) +
+  geom_text_repel(data = top_genes, aes(label = gene) ) +
+  theme_minimal() +
+  xlab("log2 Fold Change") +
+  ylab("-log10(P-value)")
+
+plot_list$pseudo_bulk_all_cells_no_7$UCSFi001_A_vs_BiH005$vulcano
+```
+```{r}
+de_genes_all_cells |> filter(FDR<0.05, logFC>0) |> pull(gene) |> writeClipboard()
+
+```
+
+
+```{r}
+de_genes_all_cells |> filter(FDR<0.05, logFC<0) |> pull(gene) |> writeClipboard()
+
+```

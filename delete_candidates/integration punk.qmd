@@ -1,0 +1,951 @@
+---
+title: "integration punk"
+format: html
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+library(Seurat)
+library(tidyseurat)
+library(here)
+library(SeuratWrappers)
+library(patchwork)
+dataset_name <- "hub_11"
+```
+
+```{r}
+lower_nCount_RNA_thresh_quantile <- NA
+lower_nCount_RNA_thresh <- 3000
+upper_nCount_RNA_thresh_quantile<- NA
+upper_nCount_RNA_thresh<- 42000
+upper_mito_thresh_quantile<- NA
+upper_mito_thresh <- 7.5
+deleted_clusters<- c(1) #c(11,12)
+
+
+##
+log_n_count_rna_plot_limits <- c(0.001,log(1.05*(max(seurat_hub_10_11$nCount_RNA))))
+
+
+n_count_rna_plot_limits <- c(1,1.05*(max(seurat_hub_10_11$nCount_RNA)))
+
+
+
+
+hub_11 <- read_rds(here("intermediate_data", "QC_dataset_setup_hub_11.rds"))
+
+
+hub_11[["cellbender_RNA"]] <- hub_11[["RNA"]]
+hub_11[["RNA"]] <- hub_11[["uncorrected_RNA"]]
+hub_11[["uncorrected_RNA"]] <- NULL
+hub_11
+```
+
+```{r}
+hub_11 |> DimPlot()
+```
+
+```{r}
+hub_11 |> FeaturePlot("nCount_RNA")
+```
+
+```{r}
+hub_11[["percent_mito"]] <- PercentageFeatureSet(hub_10_11ect = hub_11, pattern = "^MT-")
+hub_11$"mito_group" <- ifelse(pull(hub_11, percent_mito) > upper_mito_thresh,"over perc. mito. thresh.","under perc. mito thresh.")
+
+hub_11 <- hub_11 |>
+  filter(
+    #!(.data[[basic_cluster_name]] %in% deleted_clusters) &
+      nCount_RNA < upper_nCount_RNA_thresh &
+      nCount_RNA > lower_nCount_RNA_thresh &
+      percent_mito < upper_mito_thresh &
+      singlet_doublet_cellranger == "singlet" & 
+      cellbender_prob_to_be_cell> 0.99)
+```
+
+## basic processing
+
+```{r basic processing 2}
+
+seurat_hub_10_11 <- hub_11
+
+resolution_clustering_1 <- 0.8
+resolution_clustering_2 <- 0.2
+dim_number_pca_and_neighbors <- 15
+
+
+resolution_clustering_1 <- resolution_clustering_1
+resolution_clustering_2 <- resolution_clustering_2
+dim_number_pca_and_neighbors <- dim_number_pca_and_neighbors
+
+convert_vector <- c("CMO301"= "hLOA_BIHi001-B",
+                    "CMO302"= "hLOA_BIHi005-A",
+                    "CMO303"= "hLOA_BIHi250-A",
+                    "CMO304"= "hLOA_UCSFi001-A")
+
+
+source(here("scripts", "basic_seurat_processing_for_each_assay.R"))
+
+
+seurat_hub_10_11 |> write_rds(here("intermediate_data",paste0("filtered_X_", "hub_11" ,"_processed" , ".rds")))
+```
+
+```{r}
+hub_11 <-  read_rds(here("intermediate_data",paste0("filtered_X_", "hub_11" ,"_processed" , ".rds")))
+
+hub_11[["cellbender_RNA"]] <- hub_11[["RNA"]]
+hub_11[["RNA"]] <- hub_11[["uncorrected_RNA"]]
+hub_11[["uncorrected_RNA"]] <- NULL
+hub_11 <- UpdateSeuratObject(hub_11)
+hub_11$orig.ident <- "hub_11"
+
+hub_11 |> DimPlot()
+```
+
+```{r}
+#hub_11 <- seurat_hub_10_11
+seurat_hub_10_11 <- NULL
+markers_hub_11 <- FindAllMarkers(hub_11, min.pct = 0.5)
+
+top_genes_hub_11 <- markers_hub_11 |>
+  group_by(cluster) |> 
+  slice_min(p_val_adj,  n = 10) |>
+  slice_max(avg_log2FC,  n = 3) |>
+  pull(gene)
+```
+
+```{r}
+hub_10 <-  read_rds(here("intermediate_data",paste0("filtered_3_", "hub_10" ,"_processed" , ".rds")))
+hub_10$orig.ident <- "hub_10"
+
+
+markers_hub_10 <- FindAllMarkers(hub_10, min.pct = 0.5)
+
+top_genes_hub_10 <- markers_hub_10 |>
+  group_by(cluster) |> 
+  slice_min(p_val_adj,  n = 10) |>
+  slice_max(avg_log2FC,  n = 3) |>
+  pull(gene)
+
+hub_10 |> DimPlot()
+```
+
+```{r}
+
+hub_10 |> DotPlot(top_genes_hub_10)+theme(axis.text.x = element_text(angle = 45, hjust = 1)) + ggtitle("")
+
+hub_11 |> DotPlot(top_genes_hub_11)+theme(axis.text.x = element_text(angle = 45, hjust = 1)) + ggtitle("")
+
+
+hub_10 |> DotPlot(top_genes_hub_11)+theme(axis.text.x = element_text(angle = 45, hjust = 1)) + ggtitle("")
+
+hub_11 |> DotPlot(top_genes_hub_10)+theme(axis.text.x = element_text(angle = 45, hjust = 1)) + ggtitle("")
+
+
+```
+
+```{r}
+
+
+hub_10[["cellbender_RNA"]] <- NULL
+hub_11[["cellbender_RNA"]]<- NULL
+
+hub_10_11 <- merge(hub_10, y = hub_11, add.cell.ids = c("hub_10", "hub_11"), project = "hub")
+```
+
+```{r}
+Layers(hub_10_11)
+
+
+hub_10_11 <- NormalizeData(hub_10_11)
+hub_10_11 <- FindVariableFeatures(hub_10_11)
+hub_10_11 <- ScaleData(hub_10_11)
+hub_10_11[["RNA"]]$scale.data  <- hub_10_11[["RNA"]]$scale.data%>% write_matrix_memory(compress=FALSE)
+
+hub_10_11 <- RunPCA(hub_10_11)
+
+hub_10_11 <- FindNeighbors(hub_10_11, dims = 1:30, reduction = "pca")
+hub_10_11 <- FindClusters(hub_10_11, resolution = 2, cluster.name = "unintegrated_clusters")
+
+hub_10_11 <- RunUMAP(hub_10_11, dims = 1:30, reduction = "pca", reduction.name = "umap.unintegrated")
+
+hub_10_11 <- JoinLayers(hub_10_11)
+
+
+hub_10_11 <- hub_10_11 |>
+  mutate(cell_line_cellranger= case_when(cell_line_cellranger== "LOA_BIHi250-A" ~ "hLOA_BIHi250-A",
+                                         cell_line_cellranger== "LOA_BIHi005-A" ~ "hLOA_BIHi005-A",
+                                         cell_line_cellranger== "LOA_UCSFi001-A" ~ "hLOA_UCSFi001-A",
+                                         TRUE ~ cell_line_cellranger))
+                                         
+
+DimPlot(hub_10_11, reduction = "umap.unintegrated", group.by = "orig.ident")
+DimPlot(hub_10_11, reduction = "umap.unintegrated", group.by = "cell_line_cellranger")
+
+
+```
+
+```{r}
+hub_10_11|>  #pull(cell_line_cellranger) |> unique()
+  ggplot(aes(cell_line_cellranger, fill = cell_line_cellranger))+ geom_bar()+ facet_wrap(~ orig.ident)+theme_bw()+theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+```{r}
+dir.create(here("intermediate_data", "integrate_punk"))
+
+hub_10_11 |> write_rds(here("intermediate_data", "integrate_punk", "seurat_obj_hub_10_11_perintegration.rds"))
+```
+
+```{r}
+hub_10_11 <-  read_rds(here("intermediate_data", "integrate_punk", "seurat_obj_hub_10_11_perintegration.rds"))
+hub_10_11[["RNA"]] <- split(hub_10_11[["RNA"]], f = hub_10_11$orig.ident)
+
+hub_10_11 <- NormalizeData(hub_10_11)
+hub_10_11 <- FindVariableFeatures(hub_10_11)
+hub_10_11 <- ScaleData(hub_10_11)
+hub_10_11[["RNA"]]$scale.data  <- hub_10_11[["RNA"]]$scale.data%>% write_matrix_memory(compress=FALSE)
+hub_10_11 <- RunPCA(hub_10_11)
+
+
+hub_10_11 <- IntegrateLayers( object = hub_10_11, method = HarmonyIntegration,
+  orig.reduction = "pca", new.reduction = "harmony",
+  verbose = FALSE
+)
+
+
+
+hub_10_11 <- FindNeighbors(hub_10_11, dims = 1:20, reduction = "harmony")
+hub_10_11 <- FindClusters(hub_10_11, resolution = 0.2, cluster.name = "harmony_clusters_res0.2_20dims")
+hub_10_11 <- RunUMAP(hub_10_11, reduction = "harmony", dims = 1:30, reduction.name = "umap.harmony")
+
+hub_10_11 |> write_rds(here("intermediate_data", "integrate_punk", "seurat_obj_hub_10_11_harmony.rds"))
+```
+```{r}
+
+
+p1 <- DimPlot(
+  hub_10_11,
+  reduction = "umap.harmony",
+  group.by = c("orig.ident", "cell_line_cellranger","harmony_clusters_res0.2_20dims"),
+  combine = FALSE, label.size = 2
+)
+p1
+```
+
+
+```{r}
+hub_10_11 <- IntegrateLayers(
+  object = hub_10_11, method = FastMNNIntegration,
+  new.reduction = "integrated.mnn",
+  verbose = FALSE
+)
+
+
+)
+
+hub_10_11 <- RunUMAP(hub_10_11, reduction = "integrated.mnn", dims = 1:30, reduction.name = "umap.mnn")
+hub_10_11 <- FindNeighbors(hub_10_11, dims = 1:20, reduction = "integrated.mnn")
+hub_10_11 <- FindClusters(hub_10_11, resolution = 0.2, cluster.name = "mnn_clusters_res0.2_20dims")
+
+p2 <- DimPlot(hub_10_11,
+              reduction = "umap.mnn",
+              group.by = c("orig.ident", "cell_line_cellranger", "mnn_clusters_res0.2_20dims"),
+  combine = FALSE, label.size = 2)
+
+
+p2
+```
+```{r}
+#new metadata
+hub_10_11$dataset_cell_line_cellranger <- hub_10_11 |> mutate(dataset_cell_line_cellranger=paste(orig.ident,cell_line_cellranger, sep="_" )) |> pull(dataset_cell_line_cellranger)
+
+hub_10_11$cell_line 
+
+hub_10_11$organoid <- hub_10_11 |> separate(cell_line_cellranger,into = c("organoid","cell_line")) |> select(c("organoid","cell_line")) |> pull(organoid)
+
+hub_10_11$cell_line <- hub_10_11 |> separate(cell_line_cellranger,into = c("organoid","cell_line")) |> select(c("organoid","cell_line")) |> pull(cell_line)
+
+
+```
+
+
+```{r}
+hub_10_11 |> ggplot(aes(mnn_clusters_res0.2_20dims, fill=cell_line_cellranger))  + geom_bar()
+hub_10_11 |> ggplot(aes(mnn_clusters_res0.2_20dims, fill=cell_line_cellranger))  + geom_bar() + facet_wrap(~orig.ident)
+hub_10_11 |> filter(organoid=="hLOA") |> ggplot(aes(mnn_clusters_res0.2_20dims,fill=mnn_clusters_res0.2_20dims))  + geom_bar() + facet_grid(orig.ident ~ cell_line)
+
+hub_10_11 |> filter(organoid=="hLOA") |> ggplot(aes(mnn_clusters_res0.2_20dims,fill=mnn_clusters_res0.2_20dims))  + geom_bar(aes(y = after_stat(count / sum(count)))) + facet_grid(orig.ident ~ cell_line)
+
+hub_10_11 |> filter(organoid=="hLOA") |> ggplot(aes(harmony_clusters_res0.2_20dims,fill=harmony_clusters_res0.2_20dims))  + geom_bar(aes(y = after_stat(count / sum(count)))) + facet_grid(orig.ident ~ cell_line)
+
+
+
+hub_10_11|> ggplot(aes(mnn_clusters_res0.2_20dims, fill=orig.ident))  + geom_bar()
+hub_10_11|> ggplot(aes(mnn_clusters_res0.2_20dims, fill=dataset_cell_line_cellranger))  + geom_bar()
+
+
+```
+
+
+
+
+```{r}
+hub_10_11 |>   write_rds(here("intermediate_data", "integrate_punk", "seurat_obj_hub_10_11_harmony_mnn.rds"))
+hub_10_11 <- read_rds(here("intermediate_data", "integrate_punk", "seurat_obj_hub_10_11_harmony_mnn.rds"))
+
+```
+
+
+
+
+```{r}
+hLOA <- hub_10_11 |> filter(organoid=="hLOA")
+
+hLOA <- hub_10_11 |> filter(organoid=="hLOA")
+
+```
+
+
+
+
+
+
+
+
+
+
+```{r}
+hLOA <- NormalizeData(hLOA)
+hLOA <- FindVariableFeatures(hLOA)
+hLOA <- ScaleData(hLOA)
+hLOA[["RNA"]]$scale.data  <- hLOA[["RNA"]]$scale.data%>% write_matrix_memory(compress=FALSE)
+hLOA <- RunPCA(hLOA)
+
+
+hLOA <- IntegrateLayers( object = hLOA, method = HarmonyIntegration,
+  orig.reduction = "pca", new.reduction = "integrated.harmony",
+  verbose = FALSE
+)
+
+
+
+hLOA <- FindNeighbors(hLOA, dims = 1:20, reduction = "integrated.harmony")
+hLOA <- FindClusters(hLOA, resolution = 0.2, cluster.name = "harmony_clusters_res0.2_20dims")
+hLOA <- RunUMAP(hLOA, reduction = "integrated.harmony", dims = 1:20, reduction.name = "umap.harmony")
+
+hLOA |> write_rds(here("intermediate_data", "integrate_punk", "seurat_obj_hLOA_harmony.rds"))
+```
+
+
+```{r}
+p4 <- DimPlot(hLOA,
+              reduction = "umap.harmony",
+              group.by = c("orig.ident", "cell_line_cellranger", "dataset_cell_line_cellranger", "mnn_clusters_res0.2_20dims"),
+  combine = FALSE,
+  label.size = 2)
+
+
+p4
+```
+
+```{r}
+
+hLOA <- IntegrateLayers( object = hLOA, method = FastMNNIntegration,
+  orig.reduction = "pca", new.reduction = "integrated.mnn",
+  verbose = FALSE
+)
+
+hLOA <- FindNeighbors(hLOA, dims = 1:20, reduction = "integrated.mnn")
+hLOA <- FindClusters(hLOA, resolution = 0.2, cluster.name = "mnn_clusters_res0.2_20dims")
+hLOA <- RunUMAP(hLOA, reduction = "integrated.mnn", dims = 1:20, reduction.name = "umap.mnn")
+
+hLOA |> write_rds(here("intermediate_data", "integrate_punk", "seurat_obj_hLOA_harmony_mnn.rds"))
+```
+
+```{r}
+p5 <- DimPlot(hLOA,
+              reduction = "umap.mnn",
+              group.by = c("orig.ident", "cell_line_cellranger", "dataset_cell_line_cellranger", "mnn_clusters_res0.2_20dims"),
+  combine = FALSE,
+  label.size = 2)
+
+
+p5
+```
+
+```{r}
+p6 <- DimPlot(hLOA,
+              reduction = "integrated.mnn",
+              group.by = c("orig.ident", "cell_line_cellranger", "dataset_cell_line_cellranger", "mnn_clusters_res0.2_20dims"),
+  combine = FALSE,
+  label.size = 2)
+
+
+p6
+```
+
+```{r}
+
+p7 <- hLOA |> ggplot(aes(mnn_1, mnn_2,color = cell_line)) + geom_point() +theme_classic()
+
+p8 <- hLOA |> ggplot(aes(mnn_1, fill = cell_line))+geom_histogram(aes(y=after_stat(density)))+facet_grid(vars(cell_line, orig.ident))+theme_void()
+
+p7/p8 
+```
+
+```{r}
+hLOA <- ProjectDim(hLOA, reduction = "integrated.mnn")
+hLOA <- ProjectDim(hLOA, reduction = "integrated.harmony")
+
+
+hLOA@reductions$harmony <- NULL
+hLOA@reductions$integrated.mnn@cell.embeddings
+hLOA@reductions$integrated.mnn@feature.loadings
+
+mnn_embds <- hLOA@reductions$integrated.mnn@cell.embeddings
+
+hLOA@reductions$integrated.mnn@stdev <- as.numeric(apply(mnn_embds, 2, stats::sd))
+mnn_stdev <- tibble(stdev=hLOA@reductions$integrated.mnn@stdev, dim_mmn=colnames(mnn_embds)) |> separate(dim_mmn, into = c("mnn","dim")) |> mutate(dim=as.numeric(dim))
+
+mnn_stdev |> ggplot(aes(dim, stdev))+geom_col()+ggtitle("MNN dimensions")+ theme_bw()
+```
+
+
+```{r}
+
+```
+
+
+```{r}
+hLOA@reductions$integrated.mnn@feature.loadings |> as_tibble(rownames="gene") |> arrange(desc(mnn_1))
+```
+
+
+
+```{r}
+hLOA@reductions$integrated.mnn@feature.loadings |> as_tibble(rownames="gene") |> slice_min(mnn_1, n=10) |> pull(gene)
+hLOA@reductions$integrated.mnn@feature.loadings |> as_tibble(rownames="gene") |> slice_max(mnn_1, n=10) |> pull(gene)
+```
+
+
+```{r}
+
+p7 <- hLOA |> ggplot(aes(mnn_2, mnn_3,color = cell_line)) + geom_point() +theme_classic()
+
+p8 <- hLOA |> ggplot(aes(mnn_3, fill = cell_line))+geom_histogram(aes(y=after_stat(density)))+facet_grid(vars(cell_line, orig.ident))+theme_void()
+
+p7/p8 
+```
+
+
+
+```{r}
+hLOA@reductions$integrated.mnn@feature.loadings |> as_tibble(rownames="gene") |> slice_min(mnn_2, n=10) |> pull(gene)
+hLOA@reductions$integrated.mnn@feature.loadings |> as_tibble(rownames="gene") |> slice_max(mnn_2, n=10) |> pull(gene)
+
+```
+
+
+####metadata:cell cycle
+
+```{r}
+hLOA |> write_rds(here("intermediate_data", "integrate_punk", "seurat_obj_hLOA_harmony_mnn.rds"))
+hLOA <- JoinLayers(hLOA)
+
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+
+hLOA <- CellCycleScoring(hLOA, s.features = s.genes, g2m.features = g2m.genes)
+
+
+hLOA |> DimPlot(group.by = "Phase", reduction = "integrated.mnn")
+
+hLOA |> write_rds(here("intermediate_data", "integrate_punk", "seurat_obj_hLOA_harmony_mnn_joined.rds"))
+
+```
+
+
+
+
+
+```{r}
+
+p10 <- hLOA |> ggplot(aes(mnn_1, mnn_2,color = Phase)) + geom_point() +theme_classic()
+
+p11 <- hLOA |> ggplot(aes(mnn_1, fill = Phase))+
+  geom_histogram(aes(y=after_stat(density)))+facet_grid(vars(cell_line, orig.ident))+theme_void()
+
+p10/p11 
+```
+
+```{r}
+hLOA  |> ggplot(aes(harmony_clusters_res0.2_20dims,fill=Phase))  + geom_bar(aes(y = after_stat(count / sum(count)))) + facet_grid(orig.ident ~ cell_line)
+
+
+hLOA  |> ggplot(aes(harmony_clusters_res0.2_20dims,fill=Phase))  + geom_bar() + facet_grid(orig.ident ~ cell_line)
+hLOA  |> ggplot(aes(orig.ident,fill=Phase))  + geom_bar() + facet_grid( ~ cell_line)
+
+```
+```{r}
+hLOA |> VlnPlot(c("XIST", "MSMB"), group.by = "cell_line")
+hLOA |> VlnPlot(c("XIST", "MSMB"), group.by = "cell_line")
+
+```
+
+
+#Pseudobulk
+
+```{r}
+hLOA <- read_rds(here("intermediate_data", "integrate_punk", "seurat_obj_hLOA_harmony_mnn_joined.rds"))
+
+hLOA$dataset_cell.line_phase <- hLOA |> mutate(dataset_cell.line_Phase=paste(orig.ident,cell_line,Phase, sep = ".")) |> pull(dataset_cell.line_Phase)
+
+bulk_count <- AggregateExpression(hLOA, group.by = "dataset_cell.line_phase", assays = "RNA")
+bulk_count <- bulk_count$RNA
+colnames(bulk_count) <- str_replace_all(colnames(bulk_count), pattern = "-",replacement = "_")
+
+
+
+
+metadata <- tibble(sample=colnames(bulk_count)) |> 
+  
+  separate(sample, into=c("dataset","cell_line","cell_cycle"),remove = FALSE, sep = "\\.")
+
+# keep only cell lines with replicates
+
+metadata <- metadata |> filter(cell_line != "BIHi001")
+
+bulk_count <- bulk_count[,metadata$sample]
+```
+
+
+```{r}
+library(edgeR)
+library(janitor)
+
+
+#We create an edgeR object, with the counts and information on the genes (ID and length)
+y <- DGEList(counts=bulk_count)
+#We now perform normalization steps, which is totally independent from our experimental design
+y <- calcNormFactors(y)
+#Now we can see the scaling factors: these should be "reasonably" similar among all samples
+y$samples
+
+design_filtering <- model.matrix(~ cell_line, data=metadata)
+
+keep <- filterByExpr(y, design=design_filtering)
+
+keep |> sum()
+
+
+y <- y[keep, , keep.lib.sizes=FALSE]
+
+design <- model.matrix(~ 0+ dataset+cell_cycle+cell_line, data=metadata)
+
+design
+y <- estimateDisp(y, design, robust=TRUE)
+
+
+plotBCV(y)
+
+```
+
+### legacy exact test
+```{r}
+groups_et <- metadata |> mutate(group=paste0(cell_line,cell_cycle)) |> pull(group) # |> as.factor() |> as.integer()
+groups_et <- metadata |> mutate(group=paste0(cell_line)) |> pull(group) # |> as.factor() |> as.integer()
+
+y <- DGEList(counts=bulk_count, group = groups_et)
+#We now perform normalization steps, which is totally independent from our experimental design
+y <- calcNormFactors(y)
+#Now we can see the scaling factors: these should be "reasonably" similar among all samples
+keep <- filterByExpr(y, min.count	=10)
+y <- y[keep, keep.lib.sizes=FALSE]
+y <- calcNormFactors(y)
+y <- estimateDisp(y)
+
+comparisons <- list(c("BIHi005", "UCSFi001"),c("BIHi005", "BIHi250"),c("BIHi250", "UCSFi001"))
+result_edgeR <- tibble()
+for (comp_iter in comparisons) {
+  et <- exactTest(y, pair = comp_iter)
+  top_tags_et <- topTags(et, n = nrow(y))
+  comp_name <- paste(top_tags_et$comparison,collapse  ="__vs__") 
+  print(comp_name)
+  result_edgeR <- as_tibble(top_tags_et$table, rownames = "gene") |> 
+  mutate(comparison=comp_name) |> clean_names() |> bind_rows(result_edgeR) 
+}
+
+
+comp
+table(result_edgeR$fdr < 0.05)
+
+```
+```{r}
+result_edgeR |> ggplot(aes(p_value))+geom_histogram(bins = 100)
+```
+```{r}
+
+```
+
+
+```{r}
+result_edgeR |> ggplot(aes(log_fc, -log10(p_value))) + geom_point() + facet_wrap(~comparison)
+```
+
+```{r}
+tibble(counts = rnbinom(n=10000, size=5, prob=0.05) ) |> ggplot(aes(counts))+geom_histogram() 
+```
+
+
+```{r}
+result_edgeR |> filter(log_fc<(-5), fdr<0.05)
+```
+
+```{r}
+result_edgeR |> arrange(de)
+```
+
+
+
+
+### legacy exact test
+```{r}
+#We create an edgeR object, with the counts and information on the genes (ID and length)
+y <- DGEList(counts=bulk_count)
+#We now perform normalization steps, which is totally independent from our experimental design
+y <- calcNormFactors(y)
+#Now we can see the scaling factors: these should be "reasonably" similar among all samples
+y$samples
+
+design <- model.matrix(~ 0+ dataset+cell_cycle+cell_line, data=metadata)
+
+keep <- filterByExpr(y, design)
+
+keep |> sum()
+
+
+y <- y[keep, , keep.lib.sizes=FALSE] #keep.lib.sizes=FALSE causes the library sizes to be recomputed after the filtering
+
+y <- calcNormFactors(y)
+
+
+```
+
+```{r}
+#| fig-width: 15
+#| fig-height: 7
+
+mds <- plotMDS(y, plot = FALSE)
+mds_data <- tibble(
+  dim_1 = mds$x,
+  dim_2 = mds$y,
+  sample = rownames(y$samples),  # or rownames(mds$x)
+  group = y$samples$group        # Adjust according to your metadata
+) |> separate(sample, sep = "\\.", into = c("seq_run","cell_line","phase"),remove = F)
+
+library(patchwork)
+library(ggrepel)
+
+p1 <- mds_data |> 
+  ggplot(aes(x = dim_1, y = dim_2, color = cell_line, label = sample)) +
+  geom_point(size = 3) +
+  theme_bw() +
+  geom_label_repel(size = 3) +
+  labs(title = "MDS Plot", x = "Dimension 1", y = "Dimension 2")
+
+p2 <- mds_data |> 
+  ggplot(aes(x = dim_1, y = dim_2, color = phase, label = sample)) +
+  geom_point(size = 3) +
+  geom_label_repel(size = 3) +
+  theme_bw() +
+  theme(axis.title.y = element_blank(),  # Remove y-axis title
+        axis.text.y = element_blank())  # Remove y-axis tick labels
+
+
+p3 <- mds_data |> 
+  ggplot(aes(x = dim_1, y = dim_2, color = seq_run, label = sample)) +
+  geom_point(size = 3) +
+  geom_label_repel(size = 3) +
+  theme_bw() +
+  theme(axis.title.y = element_blank(),  # Remove y-axis title
+        axis.text.y = element_blank())  # Remove y-axis tick labels
+
+
+p1+p2+p3 
+```
+
+```{r}
+#| fig-width: 15
+#| fig-height: 7
+
+mds_34 <- plotMDS(y, dim = c(3, 4), plot = FALSE)
+
+mds_data_34 <- tibble(
+  dim_3 = mds_34$x,
+  dim_4 = mds_34$y,
+  sample = rownames(y$samples),
+  group = y$samples$group
+) |> separate(sample, sep = "\\.", into = c("seq_run", "cell_line", "phase"), remove = FALSE)
+
+library(patchwork)
+library(ggrepel)
+
+p1_34 <- mds_data_34 |> 
+  ggplot(aes(x = dim_3, y = dim_4, color = cell_line, label = sample)) +
+  geom_point(size = 3) +
+  theme_bw() +
+  geom_label_repel(size = 3) +
+  labs(title = "MDS Plot: Dimensions 3 vs 4", x = "Dimension 3", y = "Dimension 4")
+
+p2_34 <- mds_data_34 |> 
+  ggplot(aes(x = dim_3, y = dim_4, color = phase, label = sample)) +
+  geom_point(size = 3) +
+  geom_label_repel(size = 3) +
+  theme_bw() +
+  theme(axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()) +
+  labs(title = "", x = "Dimension 3")
+
+p3_34 <- mds_data_34 |> 
+  ggplot(aes(x = dim_3, y = dim_4, color = seq_run, label = sample)) +
+  geom_point(size = 3) +
+  geom_label_repel(size = 3) +
+  theme_bw() +
+  theme(axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()) +
+  labs(title = "", x = "Dimension 3")
+
+p1_34 + p2_34 + p3_34 + plot_layout(guides = "collect")
+
+```
+```{r}
+plotMD(y, column=1)
+
+
+abline(h=0, col="red", lty=2, lwd=2)
+```
+
+
+```{r}
+md_list <- map(1:ncol(y), function(i) {
+  ave_log_expr <- rowMeans(cpm(y, log = TRUE))
+  logFC <- cpm(y, log = TRUE)[, i] - ave_log_expr
+  
+  tibble(
+    gene = rownames(y),
+    A = ave_log_expr,
+    M = logFC,
+    sample = colnames(y)[i]
+  )
+})
+
+md_data <- bind_rows(md_list)
+
+
+ggplot(md_data, aes(x = A, y = M)) +
+  geom_point(alpha = 0.3, size = 0.5) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed", linewidth = 1) +
+  facet_wrap(~ sample, scales = "free_y") +
+  theme_bw() +
+  labs(title = "MD Plots for All Samples", x = "Average log CPM", y = "Log-fold Change")
+
+```
+```{r}
+y <- estimateDisp(y, design, robust=TRUE)
+plotBCV(y)
+```
+```{r}
+fit <- glmQLFit(y, design, robust=TRUE)
+head(fit$coefficients)
+```
+
+```{r}
+plotQLDisp(fit)
+
+```
+```{r}
+BIHi250_vs_UCSFi001 <- makeContrasts(cell_lineBIHi250 -cell_lineUCSFi001, levels=design)
+```
+```{r}
+res <- glmQLFTest(fit, contrast=BIHi250_vs_UCSFi001, lfc=log2(1.5))
+topTags(res)
+is.de <- decideTestsDGE(res)
+```
+
+```{r}
+plotMD(res, status=is.de, values=c(1,-1), col=c("red","blue"),legend="topright")
+```
+
+```{r}
+y <- estimateDisp(y, design)
+fit <- glmQLFit(y, design)
+pairwise_de_genes <- tibble()
+
+# qlf <- glmQLFTest(fit, coef=5:6)
+# pairwise_de_genes <- topTags(qlf)$table |> as_tibble(rownames="gene") |> mutate(comparison=(qlf$comparison))
+
+
+qlf <- glmQLFTest(fit, coef=5)
+pairwise_de_genes <-  topTags(qlf, n = nrow(fit))$table |> as_tibble(rownames="gene") |> mutate(comparison="BIHi250vsBIHi005") #|> mutate(comparison=qlf$comparison) #|> bind_rows(pairwise_de_genes)
+
+
+qlf <- glmQLFTest(fit, coef=6)
+pairwise_de_genes <-  topTags(qlf, n = nrow(fit))$table |> as_tibble(rownames="gene") |> mutate(comparison="UCSFi001vsBIHi005") |> bind_rows(pairwise_de_genes)
+
+qlf <- glmQLFTest(fit, contrast=c(0,0,0,0,-1,1))
+pairwise_de_genes <-  topTags(qlf, n = nrow(fit))$table |> as_tibble(rownames="gene") |> mutate(comparison="UCSFi001vsBIHi250") |> bind_rows(pairwise_de_genes)
+
+all_genes <- pairwise_de_genes |> filter(FDR<0.00001) |> pull(gene) |> unique()
+
+
+pairwise_de_genes |> ggplot(aes(PValue))+geom_histogram()+facet_wrap(vars(comparison))
+
+
+
+pairwise_de_genes |> filter(gene %in% all_genes) |> select(gene,comparison, logFC) |> pivot_wider(names_from = comparison, values_from = logFC) |> mutate(color=)|> ggplot(aes(UCSFi001vsBIHi005,BIHi250vsBIHi005))+geom_point()
+```
+
+
+```{r}
+pairwise_de_genes |> filter(gene %in% "SPRR2F") |> group_by(gene) |> mutate(sumFC=sum(logFC)) |> mutate(rel_logFC=logFC/sumFC) |> mutate(sum_rel=sum(rel_logFC)) |> ungroup() |> select(gene,comparison, rel_logFC)|> pivot_wider(names_from = comparison, values_from = rel_logFC)
+
+
+data <- pairwise_de_genes |> filter(gene %in% all_genes) |> group_by(gene) |> mutate(sumFC=sum(logFC)) |> mutate(rel_logFC=logFC/sumFC) |> mutate(sum_rel=sum(rel_logFC)) |> ungroup() |> select(gene,comparison, rel_logFC)|> pivot_wider(names_from = comparison, values_from = rel_logFC)
+
+  
+ggtern(data, aes(x = UCSFi001vsBIHi250, y = UCSFi001vsBIHi005, z =BIHi250vsBIHi005 , label = gene)) +
+  geom_point() +
+  geom_text(vjust = -0.5) +
+  labs(title = "Relative Gene Expression Across 3 Conditions") +
+  theme_minimal()
+
+
+pairwise_de_genes |> filter(gene %in% all_genes) |> ggplot(aes(comparison, logFC)) + geom_violin()
+```
+
+
+```{r}
+plotBCV(y)
+```
+
+
+```{r}
+groups_et <- metadata |> mutate(group=paste0(cell_line,cell_cycle)) |> pull(group) # |> as.factor() |> as.integer()
+groups_et <- metadata |> mutate(group=paste0(cell_line)) |> pull(group) # |> as.factor() |> as.integer()
+
+y <- DGEList(counts=bulk_count, group = groups_et)
+#We now perform normalization steps, which is totally independent from our experimental design
+y <- calcNormFactors(y)
+#Now we can see the scaling factors: these should be "reasonably" similar among all samples
+keep <- filterByExpr(y, min.count	=10)
+y <- y[keep, keep.lib.sizes=FALSE]
+y <- calcNormFactors(y)
+y <- estimateDisp(y)
+
+comparisons <- list(c("BIHi005", "UCSFi001"),c("BIHi005", "BIHi250"),c("BIHi250", "UCSFi001"))
+result_edgeR <- tibble()
+for (comp_iter in comparisons) {
+  et <- exactTest(y, pair = comp_iter)
+  top_tags_et <- topTags(et, n = nrow(y))
+  comp_name <- paste(top_tags_et$comparison,collapse  ="__vs__") 
+  print(comp_name)
+  result_edgeR <- as_tibble(top_tags_et$table, rownames = "gene") |> 
+  mutate(comparison=comp_name) |> clean_names() |> bind_rows(result_edgeR) 
+}
+
+
+comp
+table(result_edgeR$fdr < 0.05)
+
+```
+
+
+
+
+
+
+
+
+
+
+```{r}
+fit <- glmQLFit(y, design, robust=TRUE)
+qlt_2 <- glmQLFTest(fit, contrast = c(0,0,0,1,0,0))
+qlt_1 <- glmQLFTest(fit, contrast = c(0,0,1,0,0,0))
+
+design |> colnames()
+```
+
+
+```{r}
+topgenes_2<-topTags(qlt_2, n=dim(bulk_count)[[1]])[[1]] |> as_tibble()
+
+topgenes_1<-topTags(qlt_1, n=dim(bulk_count)[[1]])[[1]] |> as_tibble()
+
+topgenes_1|> arrange(logFC)
+
+topgenes_1 |> arrange(desc(logFC))
+
+
+topgenes_2|> arrange(logFC)
+topgenes_2 |> arrange(desc(logFC))
+
+
+topgenes_1 |> ggplot(aes(PValue)) + geom_histogram()
+topgenes_2 |> ggplot(aes(PValue)) + geom_histogram()
+
+#How many are significant between the cell lines?
+table(topgenes$table$FDR<0.05)
+```
+
+
+
+
+
+```{r}
+plotMDS(y)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+### ternary plots
+```{r}
+
+library(ggtern)
+
+# Sample data: Expression in 3 conditions (should sum to 1 per row)
+data <- data.frame(
+  Gene = paste0("Gene", 1:5),
+  A = c(0.6, 0.2, 0.3, 0.1, 0.7),
+  B = c(0.3, 0.5, 0.3, 0.8, 0.2),
+  C = c(0.1, 0.3, 0.4, 0.1, 0.1)
+)
+
+# Ternary plot
+ggtern(data, aes(x = A, y = B, z = C, label = Gene)) +
+  geom_point() +
+  geom_text(vjust = -0.5) +
+  labs(title = "Relative Gene Expression Across 3 Conditions") +
+  theme_minimal()
+
+```
+
+
+
+
+
+
+
+
+

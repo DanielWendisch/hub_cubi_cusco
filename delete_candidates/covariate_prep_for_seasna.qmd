@@ -1,0 +1,47 @@
+---
+title: "covariate_prep_for_seasnap"
+format: html
+editor: visual
+---
+
+
+
+```{r}
+library(tidyverse)
+library(here)
+```
+
+You can add options to executable code like this
+
+```{r}
+hub_01_02_meta_data <- read_csv(here("intermediate_data","hub_01_02_meta_data.csv"))
+hub_01_02_meta_data <- hub_01_02_meta_data |> filter(cell_line!="HUVECS")
+hub_01_02_meta_data$cell_line |> unique()
+
+
+hub_01_02_meta_data_seprate <- hub_01_02_meta_data |> rename(filename=sample) |>
+  mutate(group=paste(cell_line,tissue_type, sep="_")) |> 
+  separate_wider_delim(filename, delim = "_", names=c(NA,NA,"sequencing_type"), too_many = "merge") |> 
+  separate(name_2, into = "tissue_treatment")
+
+
+hub_01_02_meta_data_seprate |> filter(tissue_type=="hIO") |> arrange(cell_line)
+hub_01_02_meta_data_seprate |> filter(tissue_type=="EC") |> arrange(cell_line)
+
+
+hub_01_02_meta_data
+```
+```{r}
+contrast_list <- hub_01_02_meta_data|> 
+  mutate(md5="",
+         replicate=sequencing_type,
+         label=paste0(tissue_type,cell_line,replicate)) |> 
+  select(filename,md5,group,replicate,label=paste() )
+  
+write_tsv(contrast_list, here("intermediate_data/sea_snap_test_contrast_list"))
+```
+
+```{bash}
+# scp intermediate_data/sea_snap_test_contrast_list hpcl:work/yard/seasnap
+```
+

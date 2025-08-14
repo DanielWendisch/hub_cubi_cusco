@@ -1,0 +1,402 @@
+---
+title: "QC organoid scRNA-Seq"
+format: 
+  dashboard:
+    orientation: rows
+  html:
+    embed-resources: true
+server: shiny
+---
+
+
+```{r setup}
+#| warning: false
+#| echo: false
+#| context: setup
+
+library(readr)
+library(dplyr)
+library(tidyr)
+#library(purrr)
+#library(magrittr)
+library(ggplot2)
+library(Seurat)
+library(tidyseurat)
+library(BPCells)
+#library(Azimuth)
+#library(stringr)
+library(ggridges)
+library(forcats)
+library(DT)
+library(shiny)
+library(stringr)
+library(ape)
+library(here)
+library(treemapify)
+
+# ---- settings ----
+#adjust dataset and other settings here
+
+dataset_name <- "hub_10"
+
+output_dir <- here("output", paste(dataset_name,"QC_dashboard",Sys.Date(),sep = "_"))
+leiden_or_louvain <- "louvain"
+basic_cluster_name <- paste("RNA_clusters", leiden_or_louvain, "res0.8", sep="_")
+uncorrected_cluster_name <- paste("uncorrected_RNA_clusters", leiden_or_louvain, "res0.8", sep="_")
+
+
+
+# ---- source ----
+
+source(here("scripts",paste0("QC_dashboard_",dataset_name,"_processing", ".R")))
+
+
+
+# ---- functions ----
+#
+
+
+my_mad <- function(x, constant = 1) {
+    median(abs(x - median(x, na.rm = TRUE)), na.rm = TRUE) * constant
+}
+
+plot_file_name <- function(index){paste(
+  dataset_name,
+  filter(plot_specs,list_int==index) |> pull(meta_data_column),
+  filter(plot_specs,list_int==index) |> pull(subtitle),
+  ".png",sep="_")}
+
+
+theme_1 <-   theme( plot.title = element_text(hjust = 0.5),
+  plot.subtitle = element_text(hjust = 0.5))
+
+
+
+dim_plots_list <- list()
+for (i in 1:nrow(plot_specs)) {
+  DefaultAssay(seurat_obj) <- plot_specs$default_assay[i]
+  
+  
+  dim_plots_list[[plot_specs$list_int[i]]] <- seurat_obj |>
+  DimPlot(group.by = plot_specs$meta_data_column[i], order = plot_specs$order[[i]][1])  + 
+  theme_1+
+  ggtitle(label=plot_specs$plote_title[i], subtitle = plot_specs$subtitle[i])
+  
+}
+
+# ---- cell prob umap ----
+
+DefaultAssay(seurat_obj) <- "RNA"
+feature_plots <- list()
+feature_plots[[1]] <- seurat_obj |> 
+  FeaturePlot("cellbender_prob_to_be_cell", min.cutoff = 0.98, cols = c("red","black"))+
+  theme_1+
+  ggtitle(label="probability to be cell (cellbender)",
+          subtitle = "background corrected counts)")
+
+
+DefaultAssay(seurat_obj) <- "cellbender_RNA"
+feature_plots[[21]] <- seurat_obj |> 
+  FeaturePlot("cellbender_prob_to_be_cell", min.cutoff = 0.98, cols = c("red","black"))+
+  theme_1+
+  ggtitle(label="probability to be cell (cellbender)",
+          subtitle = "background corrected counts (cellbender)")
+
+
+##############################################################
+
+seurat_obj[["percent_mito"]] <- PercentageFeatureSet(object = seurat_obj, pattern = "^MT-")
+
+mt_mad_tbl <- tibble(percent_mito = seurat_obj$percent_mito,
+                     seurat_clusters= seurat_obj$seurat_clusters,
+                      cell_line_doublet_cellranger= seurat_obj$cell_line_doublet_cellranger)
+
+
+
+mt_mad_tbl <- mt_mad_tbl |> group_by(cell_line_doublet_cellranger) |> mutate(MAD_percent_mito =my_mad(x=percent_mito)) |> mutate(dead_by_mad=ifelse(MAD_percent_mito>upper_mito_thresh, "dead","alive"))
+
+seurat_obj$"dead" <- ifelse(pull(seurat_obj,percent_mito)>upper_mito_thresh,"dead","alive")
+
+
+
+
+#Shiny
+#####
+# exp_data <- AggregateExpression(object =seurat_obj ,features =VariableFeatures(seurat_obj),group.by = basic_cluster_name, assays = "RNA"  )
+# exp_data <- as_tibble(t(exp_data[[1]]), rownames = "gene")
+# 
+# umap_centers <- as_tibble(seurat_obj@reductions$umap.RNA@cell.embeddings, rownames="gene") |>
+#   mutate(cluster= seurat_obj$RNA_clusters_leiden_res0.8) |> group_by(cluster) |> 
+#   summarize(center_umap_1=mean(umapRNA_1),
+#          center_umap_2=mean(umapRNA_2))
+#   
+#   
+
+
+
+# Calculate average expression for each gene in each cluster
+colnames(seurat_obj@meta.data)[6] <- "RNA_clusters_louvain_res0.8"
+avg_exp <- AggregateExpression(object =seurat_obj ,features =VariableFeatures(seurat_obj),group.by = basic_cluster_name, assays = "RNA"  )[[1]] #|> as_tibble(rownames="gene")
+
+
+# Function to compute z-scores
+compute_z_score <- function(x) {
+  (x - mean(x)) / sd(x)
+}
+
+# Apply z-score computation
+avg_exp_z <- as.data.frame(t(apply(avg_exp, 1, compute_z_score)))
+
+# Add gene names as a column for plotting
+avg_exp_z$gene <- rownames(avg_exp_z)
+avg_exp_z <- avg_exp_z %>% gather(key = "cluster", value = "z_score", -gene)
+
+
+# Create the dot plot
+cluster_zscore_data <- as_tibble(avg_exp_z) 
+# Create the dot plot
+cluster_zscore_data <- as_tibble(avg_exp_z) |> mutate(cluster=str_replace_all(cluster,"g","") |> as.double())
+``` 
+
+
+
+
+
+
+
+
+
+#  {.sidebar}
+
+**Thresholds applied to library:**
+
+  |                     | *lower*                              | *upper*                                    |
+  |-----------------|------------------------|--------------------------------|
+  | **nCount quantile** | `{r} lower_nCount_RNA_thresh_quantile` | `{r} upper_nCount_RNA_thresh_quantile`   |
+  | **nCount RNA**      | `{r} lower_nCount_RNA_thresh`          | `{r} upper_nCount_RNA_thresh` |
+  &nbsp;
+  &nbsp;
+  
+  |                         | *lower* | *upper*                        |
+  |-------------------------|-----------|----------------------------------|
+  | **% mito. genes** | none      | `{r} upper_mito_thresh`          |
+  &nbsp;
+  &nbsp;
+  
+  |                      |                        |
+  |----------------------|------------------------|
+  | **deleted clusters** | `{r} deleted_clusters` |
+  
+&nbsp;
+&nbsp;
+&nbsp;
+&nbsp;
+
+**Select for dotplot**
+```{r}
+selectInput('chosen_genes', "genes", sort(unique(cluster_zscore_data$gene)), multiple = TRUE) 
+
+```
+
+
+
+
+
+
+
+# Pre-Filtering
+
+### Column {.tabset}
+```{r}
+#| title: knee, marginal nCount_RNA - NA
+
+
+
+############### move to QCsetup
+seurat_obj <- seurat_obj |> 
+  mutate(cellbender=if_else(cellbender_prob_to_be_cell>0.95,"cellbender.probable","cellbender.not.probable")) |> 
+  mutate(vireo=case_when(vireo_snp_demux == "unassigned" ~ "vireo.unassigned" ,
+                         is.na(vireo_snp_demux) ~ "vireo.no data",
+                         TRUE ~ "vireo.cell")) |> 
+  mutate(cellranger=paste("cellranger",singlet_doublet_cellranger,sep="."))
+
+
+
+
+
+max_prob <- max(seurat_obj$cellbender_prob_to_be_cell, na.rm = TRUE)
+max_log_RNA <- max(log(seurat_obj$nCount_RNA), na.rm = TRUE)
+
+p <- ggplot(seurat_obj, aes(x = log(rank(-nCount_RNA)), color = vireo_snp_demux)) +
+  geom_point(aes(y = log(nCount_RNA))) +
+  geom_point(aes(y = cellbender_prob_to_be_cell * max_log_RNA / max_prob), color = "red") +
+  scale_y_continuous(
+    name = "log(nCount_RNA)",
+    sec.axis = sec_axis(~ . * max_prob / max_log_RNA, name = "cellbender_prob_to_be_cell")
+  ) +
+  theme_classic()
+
+
+
+
+ggExtra::ggMarginal(p +
+                    theme(legend.position = "right") ,
+                    type = "histogram",
+                    groupColour = TRUE,
+                    groupFill = TRUE,
+                    size = 3,
+                    margins = "y") 
+```
+
+
+```{r}
+#| title: knee, marginal nCount_RNA
+
+
+p <- seurat_obj |>
+  filter(!is.na(vireo_snp_demux)) |> 
+  ggplot(aes(log(rank(-nCount_RNA)),
+             nCount_RNA,color=vireo_snp_demux)) +
+  geom_point() +
+  # scale_x_log10(labels = scales::comma_format()) +
+  scale_y_log10() +
+  expand_limits(y = 0) +
+  ggplot2::annotation_logticks() +
+  ggplot2::theme_classic() +
+  ggtitle("without vireo.NA")
+
+
+ggExtra::ggMarginal(p +
+                    theme(legend.position = "right") ,
+                    type = "histogram",
+                    groupColour = TRUE,
+                    groupFill = TRUE,
+                    size = 3,
+                    margins = "y") 
+
+```
+
+
+
+
+```{r}
+#| title: mosaic cellbender, vireo, cellranger multi
+
+
+  
+  
+seurat_obj |>   
+  select(cellbender, vireo, cellranger) |> 
+  group_by(cellbender, vireo, cellranger) |> 
+  count() |> 
+  mutate(group_name=paste(cellbender, vireo, cellranger, sep = "....")) |> 
+  ggplot(aes(area=n, fill = group_name, label=group_name ))+
+  geom_treemap()+
+  geom_treemap_text(colour = "white",
+                    place = "centre",
+                    size = 15,
+                    grow = FALSE)
+```
+
+
+```{r}
+#| title: mosaic cellbender, vireo, cellranger multi
+
+seurat_obj |> 
+  select(cellbender, vireo, cellranger) |> 
+  group_by(cellbender, vireo, cellranger) |> 
+  count() |> 
+  mutate(group_name=paste(cellbender, vireo, cellranger, sep = "....")) |> 
+  # pull(group_name) |> unique()
+  
+  ggplot(aes(area=n, fill = group_name, label=group_name ))+
+  geom_treemap()+
+  geom_treemap_text(colour = "white",
+                    place = "centre",
+                    size = 15,
+                    grow = FALSE)
+```
+
+
+```{r}
+#| title: after pre-filter mosaic vireo, cellranger multi
+
+cells_no_vireo_no_ranger <- seurat_obj |> 
+  mutate(group_name=paste( vireo, cellranger, sep = "....")) |> 
+  filter(group_name=="vireo.no data....cellranger.no cell") |> 
+  pull(.cell)
+
+
+
+bad_cells_sample <- sample(cells_no_vireo_no_ranger, size = 200)
+
+
+seurat_obj_pre_filtered <-  seurat_obj |> filter(!(.cell%in% setdiff(cells_no_vireo_no_ranger,bad_cells_sample)))
+
+
+seurat_obj_pre_filtered |> 
+  select(vireo, cellranger) |> 
+  group_by( vireo, cellranger) |> 
+  count() |> 
+  mutate(group_name=paste( vireo, cellranger, sep = "....")) |> 
+  # pull(group_name) |> unique()
+  ggplot(aes(area=n, fill = group_name, label=group_name ))+
+  geom_treemap()+
+  geom_treemap_text(colour = "white",
+                    place = "centre",
+                    size = 15,
+                    grow = FALSE)
+```
+
+
+
+
+```{r}
+library(ggridges)
+
+p <-   seurat_obj |> 
+  ggplot( aes(x = log(rank(-nCount_RNA)), color = cellbender)) +
+  geom_point(aes(y = log(nCount_RNA))) +
+  geom_point(aes(y = cellbender_prob_to_be_cell * max_log_RNA / max_prob), color = "red") +
+  scale_y_continuous(
+    name = "log(nCount_RNA)",
+    sec.axis = sec_axis(~ . * max_prob / max_log_RNA, name = "cellbender_prob_to_be_cell")
+  ) +
+  theme_classic()
+
+
+
+seurat_obj |> 
+  ggplot( aes(x = log(rank(-nCount_RNA)), y=cellbender, fill = cellbender)) +
+      geom_density_ridges(alpha=0.6, stat="binline")
+
+
+seurat_obj|> 
+  ggplot( aes(x = log(nCount_RNA) , y=cellbender, fill = cellbender)) +
+      geom_density_ridges(alpha=0.6, stat="binline")
+
+seurat_obj
+
+seurat_obj|> 
+  ggplot( aes(x = log(nCount_RNA) , y=cellbender_prob_to_be_cell, fill = cellbender)) +
+      geom_point()
+
+
+ggExtra::ggMarginal(p +
+                    theme(legend.position = "right") ,
+                    type = "histogram",
+                    groupColour = TRUE,
+                    groupFill = TRUE,
+                    size = 3,
+                    margins = "y")
+```
+
+
+```{r}
+seurat_obj |> 
+  mutate(cellbender=if_else(cellbender_prob_to_be_cell>0.95,"cellbender_probable","cellbender_less_probable")) |>
+  ggplot(aes(cellbender)) +
+  geom_histogram(stat="count")
+  
+```
+

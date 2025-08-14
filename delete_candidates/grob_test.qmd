@@ -1,0 +1,45 @@
+---
+title: "grob_test"
+format:
+  html:
+    embed-resources: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{r}
+#| warning: false
+#| echo: false
+#| context: setup
+
+library(tidyverse)
+library(here)
+library(grid)
+
+#plot_list_cellbender_cells <-  read_rds(here("output", "hub_10","plot_list_cellbender_cells.rds"))
+
+
+plot_list_grob <-  read_rds(here("output", "hub_10","plot_list_grob.rds"))
+#ggextra_plot_list_cellbender_cells <- read_rds(here("output", "hub_10","plot_list_grob.rds"))
+#clean_plot_list_cellbender_cells <-  read_rds(here("output", "hub_10","clean_plot_list.rds"))
+
+```
+
+```{r}
+grid::grid.newpage()
+grid.draw(plot_list_grob$nCount_RNA_rank__vs__RNA_rank)
+
+```
+
+```{r}
+grid::grid.newpage()
+grid.draw(plot_list_grob$nCount_RNA_rank__vs__RNA_rank_no_NA)
+
+```
+```{r}
+grid::grid.newpage()
+grid.draw(plot_list_grob$vireo_calls_barchart_grid_cellbender_vireo)
+
+```

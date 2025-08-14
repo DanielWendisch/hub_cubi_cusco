@@ -1,0 +1,47 @@
+
+#  {.sidebar}
+
+{{< meta params.test >}}
+
+
+```{r}
+#| eval: false
+#| include: false
+
+
+
+mtcars |> write_rds("test.rds")
+
+```
+
+
+
+## just some titles
+
+
+![](arrow.png)
+
+```{r}
+#| echo: false
+#| include: false
+
+library(tidyverse)
+dings <- mtcars |> select(mpg, cyl)
+```
+
+
+## just some titles
+
+![](arrow.png)
+
+## just some titles
+
+![](arrow.png)
+
+
+## just some titles
+
+![](arrow.png)
+
+
+

@@ -1,0 +1,46 @@
+---
+title: "dashboard side pane test"
+format:
+  dashboard:
+    orientation: rows
+    embed-resources: true
+params: 
+    write_test_rds: false
+    test: "print test"
+
+---
+
+
+{{< include sidbar_test.qmd >}}
+
+
+# Page
+
+this is a text
+```{r}
+print("bla")
+```
+
+## Row
+
+this is a text
+
+### Column
+
+this is a text
+
+### Column
+
+this is a text
+
+## Row
+
+this is a text
+
+### Column
+
+this is a text
+
+# Page 2
+
+{{< include sidbar_test.qmd >}}

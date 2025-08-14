@@ -1,0 +1,62 @@
+---
+title: "batch correction"
+format: html
+editor: visual
+---
+
+```{r}
+BiocManager::install("bladderbatch")
+
+library(bladderbatch)
+data(bladderdata)
+dat <- bladderEset[1:50,]
+
+pheno = pData(dat)
+edata = exprs(dat)
+batch = pheno$batch
+mod = model.matrix(~as.factor(cancer), data=pheno)
+
+# parametric adjustment
+combat_edata1 = ComBat(dat=edata, batch=batch, mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+
+# non-parametric adjustment, mean-only version
+combat_edata2 = ComBat(dat=edata, batch=batch, mod=NULL, par.prior=FALSE, mean.only=TRUE)
+
+# reference-batch version, with covariates
+combat_edata3 = ComBat(dat=edata, batch=batch, mod=mod, par.prior=TRUE, ref.batch=3)
+```
+
+```{r}
+
+library(limma)
+library(sva)
+count_tbl_var_sum <- count_tbl |>   rowwise() %>%
+  mutate(rowsums=sum(c_across(-gene)),
+         variance = var(c_across(-gene)))
+
+count_tbl_var_sum <- count_tbl_var_sum |> filter(variance>0, rowsums>50) 
+
+count_mtx_all <- count_tbl_var_sum|> select(-gene,-variance) |> as.matrix()
+count_mtx_all <-count_mtx_all[,meta_data$sample]
+rownames(count_mtx_all) <- count_tbl_var_sum |> pull(gene)
+
+
+
+meta_data_frame <- meta_data |> select(-sample)|> as.data.frame()
+rownames(meta_data_frame) <- pull(meta_data, sample)
+
+annotated_meta_data_frame <- AnnotatedDataFrame(data = meta_data_frame,dimLabels= c("gene","samples"))
+
+eset <- ExpressionSet(assayData = count_mtx_all[unique(rownames(count_mtx_all)),], phenoData = annotated_meta_data_frame)
+
+pheno <- pData(eset)
+edata = exprs(eset)
+batch <- pheno$sequencing_type
+
+mod = model.matrix(~as.factor(cell_line), data=pheno)
+
+combat_edata1 = ComBat(dat=edata, batch=batch, mod=mod, par.prior=TRUE, prior.plots=FALSE)
+
+
+```
+

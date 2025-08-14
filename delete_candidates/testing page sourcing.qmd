@@ -1,0 +1,35 @@
+---
+title: "vireo"
+format: 
+  dashboard:
+    orientation: rows
+  html:
+    embed-resources: true
+
+---
+
+```{r}
+library(tidyverse)
+library(here)
+plot_list_cellbender_cells <-  read_rds(here("output", "hub_10","plot_list_cellbender_cells.rds"))
+
+p <- mtcars |> ggplot(aes(mpg, cyl))+geom_point() 
+
+p |> write_rds(here("output", "test","test.rds"))
+plot_list_cellbender_cells
+```
+
+
+
+
+# Pre-Filtering
+
+### Column {.tabset}
+
+```{r}
+
+#plot(plot_list_cellbender_cells[[1]])
+
+p <- read_rds(here("output", "test","test.rds"))
+print(p)
+```

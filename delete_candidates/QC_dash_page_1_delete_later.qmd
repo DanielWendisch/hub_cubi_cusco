@@ -1,0 +1,249 @@
+---
+title: "QC_dash_page_1_delete_later"
+format:
+  dashboard:
+    orientation: rows
+    embed-resources: true
+params: 
+    dataset_name: "hub_10"
+    path_grob: "C:/Users/Danne/R_projects/hub_cubi_cusco/output/hub_10/filter_2/qc_dashboard_plot_plot_list_grob_filter_2.rds"
+    content: "Alveolar Lung Organoids"
+
+---
+
+```{r setup}
+#| warning: false
+#| echo: false
+#| context: setup
+
+library(tidyverse)
+library(here)
+library(grid)
+
+dataset_content <- params$content
+dataset_name<- params$dataset_name
+
+plot_list_grob <- read_rds(params$path_grob)
+#plot_list_grob <- read_rds(path_ggplot_filtered_once)
+```
+
+
+#  {.sidebar}
+
+
+**Cellbender called:**
+
+  |                     |  *minimum counts per cell*             | 
+  |---------------------|----------------------------------------|
+  | **nCount quantile** |  write something here                  |
+&nbsp;
+&nbsp;
+
+**Prefiltering_2:**
+
+
+  |                     | *lower*                                | 
+  |---------------------|----------------------------------------|
+  | **nCount quantile** |  write something here                  |
+  | **nCount RNA**      |         write something here           |       
+
+&nbsp;
+&nbsp;
+&nbsp;             
+&nbsp;
+&nbsp;
+&nbsp;
+
+**Thresholds applied to library:**
+
+  |                     | *lower*                              | *upper*                                    |
+  |-----------------|------------------------|--------------------------------|
+  | **nCount quantile** | dings| dings  |
+  | **nCount RNA**      | dings       | dings |
+  
+  &nbsp;
+  &nbsp;
+  
+  |                         | *lower* | *upper*                        |
+  |-------------------------|-----------|----------------------------------|
+  | **% mito. genes** | none      | dings       |
+  &nbsp;
+  &nbsp;
+  
+  |                      |                        |
+  |----------------------|------------------------|
+  | **deleted clusters** |  dings |
+  
+&nbsp;
+&nbsp;
+&nbsp;
+&nbsp;
+
+
+
+# Background Correction
+
+
+
+## Row {height="10%"}
+**`{r} dataset_content`**
+&nbsp;
+**`{r} dataset_name` sequencing run**
+
+## Row 
+
+### Column {.tabset}
+
+```{r}
+#| title: clusters
+
+
+grid::grid.newpage()
+
+grid.draw(plot_list_grob$RNA$RNA_clusters_louvain_res0.8)
+```
+
+```{r}
+#| title: cellline
+
+grid::grid.newpage()
+
+grid.draw(plot_list_grob$RNA$cell_line)
+
+```
+
+
+```{r}
+#| title: doublets & empty droplets
+
+grid::grid.newpage()
+
+grid.draw(plot_list_grob$RNA$singelts_doublets)
+
+```
+
+
+```{r}
+#| title: cell probability
+
+grid::grid.newpage()
+
+grid.draw(plot_list_grob$RNA$cellbender_cell_prob_embedding_RNA)
+
+```
+
+```{r}
+#| title: cluster sizes corrected
+
+grid::grid.newpage()
+
+grid.draw(plot_list_grob$RNA$bar_cell_line_doublet_cellranger)
+```
+
+
+
+
+### Column {.tabset}
+
+```{r}
+#| title: clusters
+grid::grid.newpage()
+grid.draw(plot_list_grob$cellbender_RNA$cellbender_RNA_clusters_louvain_res0.8)
+```
+
+
+```{r}
+#| title: cellline
+
+grid::grid.newpage()
+
+grid.draw(plot_list_grob$cellbender_RNA$cell_line)
+
+```
+
+
+```{r}
+#| title: doublets & empty droplets
+
+grid::grid.newpage()
+
+grid.draw(plot_list_grob$cellbender_RNA$singelts_doublets)
+
+```
+
+
+```{r}
+#| title: cell probability
+
+grid::grid.newpage()
+
+grid.draw(plot_list_grob$cellbender_RNA$cellbender_cell_prob_embedding_RNA)
+
+```
+
+```{r}
+#| title: cluster sizes corrected
+
+grid::grid.newpage()
+
+grid.draw(plot_list_grob$cellbender_RNA$bar_cell_line_doublet_cellranger)
+```
+
+
+# QC metrics, after background correction
+## Row {height="50%"}
+### Dimplots {.tabset}
+
+
+
+
+```{r}
+#| title: exceeding mito %
+
+grid::grid.newpage()
+grid.draw(plot_list_grob$RNA[["mito_group_RNA_embedding"]])
+```
+
+
+
+
+
+
+
+
+```{r}
+#| title: percent mito
+
+grid::grid.newpage()
+grid.draw(plot_list_grob$RNA$perc_mito_RNA_embedding)
+```
+
+
+```{r}
+#| title: freq. mito, uncorrected
+
+grid::grid.newpage()
+grid.draw(plot_list_grob$cellbender_RNA$perc_mito_RNA_embedding)
+```
+
+### Column {.tabset}
+
+
+```{r}
+#| title: counts vs features per cell
+grid::grid.newpage()
+
+grid.draw(plot_list_grob$RNA$ggextra_plots)
+
+```
+
+## Row {height="50%"}
+
+
+
+
+
+### VlnPlots {.tabset}
+
+### Column {.tabset}
+

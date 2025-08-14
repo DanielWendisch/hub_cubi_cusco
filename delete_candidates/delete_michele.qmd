@@ -1,0 +1,77 @@
+---
+title: "delete michelle test"
+format: html
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+library(Seurat)
+library(tidyseurat)
+library(here)
+
+#detach("package:tidyseurat", unload = TRUE)
+
+```
+
+Atomics(Cloud Service)
+
+Cosmix (NanoString)
+
+Michelle need AWS
+
+
+Sequencing data
+||
+10X data pipeline: 
+  Cellranger (normal single cell)
+  Spaceranger 
+||
+Seurat analyzable format
+
+
+```{r}
+obj_path <- here("intermediate_data", "pre-filtered_QC_dataset_setup_hub_10.rds")
+
+obj <- read_rds(obj_path)
+
+
+obj@meta.data |> colnames()
+
+obj@assays$RNA@layers$something <- obj@assays$RNA@layers$counts +1) 
+
+
+obj@meta.data$logRNA <-  obj |> mutate(logRNA=log(nCount_RNA)) 
+
+
+obj |> FeaturePlot("logRNA", slot="something")
+```
+
+
+```{r}
+obj@assays$RNA@layers$counts*2
+
+SCTransform()
+
+obj@assays$cellbender_RNA@layers
+
+obj |> DimPlot()
+obj |> FeaturePlot("LGMN")
+
+
+?NormalizeData
+DefaultAssay(obj)
+
+colnames(obj)
+rownames(obj)
+```
+
+
+
+
+
+
+```{r}
+
+```
+

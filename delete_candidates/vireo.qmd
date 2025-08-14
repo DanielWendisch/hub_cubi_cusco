@@ -1,0 +1,210 @@
+---
+title: "TEST TEST 2 vireo"
+format: 
+  dashboard:
+    orientation: rows
+    embed-resources: true
+params: 
+    param_plot_list_grob: "C:/Users/Danne/R_projects/hub_cubi_cusco/output/hub_10/plot_list_grob.rds"
+    param_ggextra_plot_list_grob: "C:/Users/Danne/R_projects/hub_cubi_cusco/output/hub_10/plotified_plot_list_grob.rds"
+---
+
+
+```{r setup}
+#| warning: false
+#| echo: false
+
+library(tidyverse)
+library(here)
+library(grid)
+library(gt)
+library(purrr)
+
+#plot_list_grob <-  read_rds(here("output", "hub_10","plot_list_grob.rds"))
+plot_list_grob <- read_rds(params$param_plot_list_grob)
+#ggextra_plot_list_cellbender_cells <- read_rds(here("output", "hub_10","plot_list_grob.rds"))
+#clean_plot_list_cellbender_cells <-  read_rds(here("output", "hub_10","clean_plot_list.rds"))
+```
+
+
+```{r }
+#plotified_ggextra_plot_list_cellbender_cells <-   read_rds(here("output", "hub_10","plotified_plot_list_grob.rds"))
+plotified_ggextra_plot_list_cellbender_cells <- read_rds(params$param_ggextra_plot_list_grob)
+
+```
+
+#  {.sidebar}
+
+**Data filtered by:**
+```{r}
+#grid::grid.newpage()
+#grid.draw(plot_list_grob$text_filter_annotations, )
+# Named list of character vectors
+
+
+
+plot_list_grob$text_filter_annotations
+
+```
+
+
+# Page 1
+
+## Row {height="50%"}
+
+### Column {.tabset}
+
+```{r}
+#| title: Cellranger RNA, RNA clusters
+
+
+grid::grid.newpage()
+grid.draw(plot_list_grob$RNA_dimplot_cellranger)
+
+```
+
+```{r}
+#| title: Cellranger RNA, vireo clusters
+
+
+grid::grid.newpage()
+grid.draw(plot_list_grob$RNA_dimplot_vireo)
+
+```
+
+```{r}
+#| title: Cellranger RNA, cellbender clusters
+
+grid::grid.newpage()
+grid.draw(plot_list_grob$RNA_dimplot_cellbender)
+
+```
+
+### Column {.tabset}
+
+```{r}
+#| title: Cellbender RNA, cellranger clusters
+
+
+grid::grid.newpage()
+grid.draw(plot_list_grob$cellbender_RNA_dimplot_cellranger)
+
+```
+
+```{r}
+#| title: Cellbender RNA, cellbender clusters
+
+
+grid::grid.newpage()
+grid.draw(plot_list_grob$cellbender_RNA_dimplot_cellbender)
+
+```
+
+```{r}
+#| title: Cellbender RNA, vireo clusters
+
+
+grid::grid.newpage()
+grid.draw(plot_list_grob$cellbender_RNA_dimplot_vireo)
+
+```
+
+
+
+
+
+```{r}
+#| title: Vireo SNV demux, cellranger clusters
+
+grid::grid.newpage()
+grid.draw(plot_list_grob$hashtag_dimplot_cellranger)
+
+```
+
+
+
+```{r}
+#| title: Vireo SNV demux, cellbender clusters
+
+
+grid::grid.newpage()
+grid.draw(plot_list_grob$hashtag_dimplot_cellbender)
+
+```
+
+```{r}
+#| title: Vireo SNV demux, vireo clusters
+
+
+grid::grid.newpage()
+grid.draw(plot_list_grob$hashtag_dimplot_vireo)
+
+```
+
+
+
+
+## Row
+
+### Column {.tabset}
+
+```{r}
+#| title: knee nCount_RNA - vireo donor
+
+
+grid::grid.newpage()
+grid.draw(plotified_ggextra_plot_list_cellbender_cells$nCount_RNA_rank__vs__RNA_rank)
+
+```
+
+```{r}
+#| title: knee nCount_RNA - vireo cell
+
+grid::grid.newpage()
+grid.draw(plotified_ggextra_plot_list_cellbender_cells[["nCount_RNA_rank__vs__RNA_rank_no_NA"]] )
+```
+
+```{r}
+#| title: knee, marginal nCount_RNA
+
+grid::grid.newpage()
+grid.draw(plotified_ggextra_plot_list_cellbender_cells$nCount_RNA_rank__vs__RNA_rank_color_cellbender)
+```
+
+```{r}
+#| title: cellbender, vireo, cellranger counts
+
+grid::grid.newpage()
+grid.draw(plot_list_grob$vireo_calls_barchart_grid_cellbender_vireo)
+
+```
+
+```{r}
+#| title: cellbender prob.
+
+grid::grid.newpage()
+grid.draw(plot_list_grob$cellbender_prob__vs__RNA_rank_color_cellbender)
+
+```
+
+```{r}
+#| title: cellbender histo
+
+grid::grid.newpage()
+grid.draw(plot_list_grob$cellbender_prob_histogram)
+
+```
+
+
+### Column
+
+lets write some text herethat describes the filtering process and qc observations.
+
+lets write some text herethat describes the filtering process and qc observations.
+lets write some text herethat describes the filtering process and qc observations.
+lets write some text herethat describes the filtering process and qc observations.
+lets write some text herethat describes the filtering process and qc observations.
+lets write some text herethat describes the filtering process and qc observations.
+lets write some text herethat describes the filtering process and qc observations.
+
+
