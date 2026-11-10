@@ -1,6 +1,0 @@
-project:
-  type: website
-
-website:
-  output-dir: docs
-

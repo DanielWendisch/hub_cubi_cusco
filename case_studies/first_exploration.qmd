@@ -23,9 +23,9 @@ library(forcats)
 # load tag calls separately
 
 ```{r}
-tag_calls_summary <- read_csv("C:/Users/Danne/raw_data/cubi_cusco/hub_01_outs/multi/multiplexing_analysis/tag_calls_summary.csv")
-tag_calls_per_cell <- read_csv("C:/Users/Danne/raw_data/cubi_cusco/hub_01_outs/multi/multiplexing_analysis/tag_calls_per_cell.csv")
-assignment_confidence_table <- read_csv("C:/Users/Danne/raw_data/cubi_cusco/hub_01_outs/multi/multiplexing_analysis/assignment_confidence_table.csv")
+tag_calls_summary <- read_csv("../../raw_data/cubi_cusco/hub_01_outs/multi/multiplexing_analysis/tag_calls_summary.csv")
+tag_calls_per_cell <- read_csv("../../raw_data/cubi_cusco/hub_01_outs/multi/multiplexing_analysis/tag_calls_per_cell.csv")
+assignment_confidence_table <- read_csv("../../raw_data/cubi_cusco/hub_01_outs/multi/multiplexing_analysis/assignment_confidence_table.csv")
 ```
 
 # A
@@ -34,7 +34,7 @@ assignment_confidence_table <- read_csv("C:/Users/Danne/raw_data/cubi_cusco/hub_
 
 ```{r}
 hub_01 <- Read10X_h5(
-  "C:/Users/Danne/raw_data/cubi_cusco/hub_01_outs/multi/count/raw_feature_bc_matrix.h5",use.names = TRUE
+  "../../raw_data/cubi_cusco/hub_01_outs/multi/count/raw_feature_bc_matrix.h5",use.names = TRUE
     
 )
 #separate the matrix in hashtag and gene reads
@@ -66,7 +66,7 @@ write_matrix_dir(
 ```{r}
 #| echo: false
 #| eval: false
-path <-  "C:\\Users\\Danne\\raw_data\\cubi_cusco\\cellbender\\hub_01\\hub_01_cellbender_corrected_filtered_seurat.h5"
+path <-  "../../raw_data/cubi_cusco/cellbender/hub_01/hub_01_cellbender_corrected_filtered_seurat.h5"
 hub_01_cellbender <- Read10X_h5(filename = path,unique.features = TRUE)
 
 setdiff(rownames(hub_01_cellbender)[!(grepl("ENSG", rownames(hub_01_cellbender)))],
@@ -192,8 +192,8 @@ saveRDS(
 
 ```{r}
 library(rhdf5)
-h5f = H5Fopen("C:\\Users\\Danne\\raw_data\\cubi_cusco\\cellbender\\hub_01\\hub_01_cellbender_corrected_filtered.h5")
-corrected = H5Fopen("C:\\Users\\Danne\\raw_data\\cubi_cusco\\cellbender\\hub_01\\hub_01_cellbender_corrected.h5")
+h5f = H5Fopen("../../raw_data/cubi_cusco/cellbender/hub_01/hub_01_cellbender_corrected_filtered.h5")
+corrected = H5Fopen("../../raw_data/cubi_cusco/cellbender/hub_01/hub_01_cellbender_corrected.h5")
 cell_prob_tbl <- tibble(
 cell=corrected$metadata$barcodes_analyzed,
 cell_probability= corrected$droplet_latents$cell_probability)

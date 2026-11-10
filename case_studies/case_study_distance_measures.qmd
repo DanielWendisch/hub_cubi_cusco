@@ -110,7 +110,7 @@ path_bulk_mtx <-paste0("intermediate_data/" , "bulk_mtx", "RNA", "counts" ,datas
 if (!(
   file.exists(path_single_cell_experiment) & file.exists(path_bulk_mtx)
     )) {
-  source("C:/Users/Danne/R_projects/hub_cubi_cusco/bulk_and_single_cell_dataset_hamonization_for_deconv.R")
+  source("bulk_and_single_cell_dataset_hamonization_for_deconv.R")
 
 }else{
   sce <- read_rds(path_single_cell_experiment)

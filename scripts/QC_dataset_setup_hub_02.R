@@ -225,7 +225,7 @@ seurat_obj <- AddMetaData(seurat_obj,cell_barcodes)
 
 
 # add cellbender cell probabilities
-corrected = H5Fopen("C:\\Users\\Danne\\raw_data\\cubi_cusco\\cellbender\\hub_02\\hub_02_cellbender_corrected.h5")
+corrected = H5Fopen("../../raw_data/cubi_cusco/cellbender/hub_02/hub_02_cellbender_corrected.h5")
 cell_prob_tbl <- tibble(
   cell=corrected$metadata$barcodes_analyzed,
   cell_probability= corrected$droplet_latents$cell_probability)

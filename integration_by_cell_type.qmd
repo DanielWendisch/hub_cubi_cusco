@@ -19,7 +19,7 @@ loadfonts(device = "win")
 ```
 
 ```{r}
-path_data_file <- "C:\\Users\\danne\\raw_data\\cubi_cusco\\"
+path_data_file <- "../../raw_data/cubi_cusco/"
 path_output_file <- "output\\"
 
 dataset_name <- "hub_01"

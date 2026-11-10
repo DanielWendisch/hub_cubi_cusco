@@ -57,7 +57,7 @@ sample_descriptors <- c("HUB02_Endothelial.cells_BIHi001-B_10X",
 "HUB02_Endothelial.cells_HUVECS_Pool")
 
 
-counts_table_hub_01_02 <- read_csv("C:/Users/Danne/raw_data/cubi_cusco/hub_01_02_bulk/counts_table_hub_01_02.csv")
+counts_table_hub_01_02 <- read_csv("../../raw_data/cubi_cusco/hub_01_02_bulk/counts_table_hub_01_02.csv")
 counts_table_hub_01_02 <- counts_table_hub_01_02[,-1] |> clean_names()
 counts_EC <- counts_table_hub_01_02 |> select(gene,sample_names_clean) |> filter(!is.na(gene))
 counts_mat <- counts_EC[,-1] |> as.matrix()

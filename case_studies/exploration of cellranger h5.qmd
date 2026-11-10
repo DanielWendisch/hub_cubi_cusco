@@ -9,7 +9,7 @@ editor: visual
 ```
 
 ```{r}
-path = "C:/Users/Danne/raw_data/cubi_cusco/hub_01_outs/multi/count/raw_feature_bc_matrix.h5"
+path = "../../raw_data/cubi_cusco/hub_01_outs/multi/count/raw_feature_bc_matrix.h5"
 
 ```
 

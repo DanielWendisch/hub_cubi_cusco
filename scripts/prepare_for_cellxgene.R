@@ -17,7 +17,7 @@ as.anndata(x = hub_01_10_11, file_path = here("output", from_script) , file_name
 
 ```{bash}
 
-rsync -r /mnt/c/Users/Danne/R_projects/hub_cubi_cusco/output/lung_and_intestinal_organoid_integration/seurat_obj_hub_01_10_11.h5ad hpct:work/hub_anndata_objects/seurat_obj_hub_01_10_11.h5ad
+rsync -r output/lung_and_intestinal_organoid_integration/seurat_obj_hub_01_10_11.h5ad hpct:work/hub_anndata_objects/seurat_obj_hub_01_10_11.h5ad
 ssh hpcl
 srun --time 7-00 --mem=8G --ntasks=8 --pty bash -i
 irsync -r hub_anndata_objects/ i:/sodarZone/home/wendiscd@CHARITE/hub_anndata_objects
