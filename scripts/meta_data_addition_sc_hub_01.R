@@ -7,7 +7,7 @@ library(tidyseurat)
 library(tidyverse)
 
 
-path_raw_data_file <-  "..\\..\\raw_data\\cubi_cusco"
+path_raw_data_file <-  "../../raw_data/cubi_cusco"
 
 obj <- read_rds(paste0("intermediate_data/", dataset_name, "_integrated_", ".rds"))#sc data
 

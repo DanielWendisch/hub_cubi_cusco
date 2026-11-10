@@ -13,7 +13,7 @@ library(tidySingleCellExperiment)
 #library(biomaRt) needed but called directly because of conflict
 
 dataset_name <- "hub_01"
-path_raw_data_file <-  "..\\..\\raw_data\\cubi_cusco"
+path_raw_data_file <-  "../../raw_data/cubi_cusco"
 
 obj <- read_rds(paste0("intermediate_data/", dataset_name, "_integrated_", ".rds"))#sc data
 combined_bulk<- read.csv(paste(path_raw_data_file,"hub_01_02_bulk\\counts_table_hub_01_02.csv", sep = "\\")) # bulk counts

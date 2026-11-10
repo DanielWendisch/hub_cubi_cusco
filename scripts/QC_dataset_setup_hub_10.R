@@ -83,7 +83,7 @@ library(patchwork)
 # set paths for dataset-associated files
 ### ----------------------------------------------------------------------------------------------------
 
-path_raw_data_file <- "..\\..\\raw_data\\cubi_cusco"
+path_raw_data_file <- "../../raw_data/cubi_cusco"
 
 path_cellranger_output <- paste(sep = "\\", path_raw_data_file, "cellranger\\hub_10_outs\\multi\\count\\raw_feature_bc_matrix.h5")
 path_cellbender_output <- paste(sep = "\\", path_raw_data_file, "cellbender\\hub_10\\hub_10_cellbender_corrected_filtered_seurat.h5")

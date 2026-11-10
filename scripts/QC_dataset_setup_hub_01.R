@@ -71,7 +71,7 @@ library(here)
 #set paths for dataset-associated files
 ###----------------------------------------------------------------------------------------------------
 dataset_name <- "hub_01"
-path_raw_data_file <- "..\\..\\raw_data\\cubi_cusco"
+path_raw_data_file <- "../../raw_data/cubi_cusco"
 
 
 path_cellranger_output <- paste(sep = "\\", here(path_raw_data_file), "hub_01_outs\\multi\\count\\raw_feature_bc_matrix.h5")

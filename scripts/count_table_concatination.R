@@ -7,7 +7,7 @@ library(vroom)
 library(here)
 
 
-path_raw_data_file <- "..\\..\\raw_data\\cubi_cusco"
+path_raw_data_file <- "../../raw_data/cubi_cusco"
 path_raw_data_file <- here("../../raw_data/cubi_cusco")
 path_input<- paste(sep = "\\", path_raw_data_file, "hub_01_02_bulk")
 

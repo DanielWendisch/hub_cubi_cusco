@@ -152,9 +152,9 @@ paste(cluster_9_markers, collapse = ", ")
 
 ```{r message=FALSE}
 variable_features_vec <- VariableFeatures(seurat_obj) |> paste( collapse = ", ")
-tibble(genes= variable_features_vec)|> write_csv(file = here(paste0("output\\variable_genes_",dataset_name,".csv")))
+tibble(genes= variable_features_vec)|> write_csv(file = here(paste0("output/variable_genes_",dataset_name,".csv")))
 
-tibble(genes= VariableFeatures(seurat_obj) ) |> write_csv(file = here(paste0("output\\variable_genes_",dataset_name,".csv")))
+tibble(genes= VariableFeatures(seurat_obj) ) |> write_csv(file = here(paste0("output/variable_genes_",dataset_name,".csv")))
 
 yu_gramp_Cell_2021_tHIO <- read_excel(here("../../raw_data/cubi_cusco/genesets_from_literature/yu...gramp_Cell_2021_tHIO.xlsx"))
 ```
